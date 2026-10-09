@@ -44,6 +44,8 @@ pub enum WaveEvent {
     },
     /// Double click: rename.
     Activate(Item),
+    /// Shift+click: move the nearer-to-centre edge of the selection or region here.
+    Trim(u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +71,7 @@ enum Drag {
     Pending {
         hit: Hit,
         x: f64,
+        shift: bool,
     },
     Select {
         anchor: u64,
@@ -407,11 +410,14 @@ impl Waveform {
         let drag = gtk::GestureDrag::new();
         drag.set_button(gdk::BUTTON_PRIMARY);
         let wf = self.clone();
-        drag.connect_drag_begin(move |_, x, y| {
+        drag.connect_drag_begin(move |g, x, y| {
             wf.main.grab_focus();
+            let shift = g
+                .current_event_state()
+                .contains(gdk::ModifierType::SHIFT_MASK);
             let mut s = wf.state.borrow_mut();
             let hit = s.hit(x, y);
-            s.drag = Some(Drag::Pending { hit, x });
+            s.drag = Some(Drag::Pending { hit, x, shift });
         });
         let wf = self.clone();
         drag.connect_drag_update(move |g, dx, _| {
@@ -495,8 +501,9 @@ impl Waveform {
         let Some(drag) = s.drag else { return };
 
         let drag = match drag {
-            Drag::Pending { hit, x: x0 } => {
-                if (x - x0).abs() < DRAG_THRESHOLD {
+            Drag::Pending { hit, x: x0, shift } => {
+                // Shift+press is always a click (trim), never a drag.
+                if shift || (x - x0).abs() < DRAG_THRESHOLD {
                     return;
                 }
                 let anchor = s.frame_at(x0);
@@ -554,8 +561,9 @@ impl Waveform {
         let Some(drag) = s.drag.take() else { return };
 
         let events = match drag {
+            Drag::Pending { x, shift: true, .. } => vec![WaveEvent::Trim(s.frame_at(x))],
             // A plain click: select what was under the pointer and move the playhead.
-            Drag::Pending { hit, x } => {
+            Drag::Pending { hit, x, .. } => {
                 let frame = s.frame_at(x);
                 s.selection = None;
                 let (item, seek) = match hit {

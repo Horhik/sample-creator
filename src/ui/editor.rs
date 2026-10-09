@@ -16,7 +16,9 @@ use crate::audio::decode::{self, AudioInfo};
 use crate::audio::peaks::{self, PeakJob};
 use crate::audio::player::Player;
 use crate::core::history::{Change, History};
-use crate::core::{ChannelMode, ColorIdx, Id, Item, Marker, Markup, RECORDER_MARK_COLOR, Region};
+use crate::core::{
+    ChannelMode, ColorIdx, Id, Item, Marker, Markup, PALETTE, RECORDER_MARK_COLOR, Region,
+};
 use crate::store::{FileRecord, Library};
 
 struct Loaded {
@@ -39,7 +41,10 @@ pub struct Editor {
     /// Range picked with the mouse or I/O, not yet a region.
     selection: Option<(u64, u64)>,
     looping: Option<Id>,
-    /// Colour for new markers and regions: the last one picked.
+    /// The temporary selection is playing in a loop.
+    loop_selection: bool,
+    /// Colour for the next new region or marker. Advances after each region so
+    /// neighbouring regions differ; picking a colour with nothing selected sets it.
     color: ColorIdx,
 
     waveform: Waveform,
@@ -258,6 +263,7 @@ impl SimpleComponent for Editor {
             selected: None,
             selection: None,
             looping: None,
+            loop_selection: false,
             color: 0,
             waveform,
             list,
@@ -279,10 +285,12 @@ impl SimpleComponent for Editor {
                 if let Some(p) = self.player()
                     && self.file.is_some()
                 {
-                    let restart = self
-                        .looping
-                        .and_then(|id| self.markup()?.region(id))
-                        .map_or(0, |r| r.start);
+                    let restart = match (self.looping, self.selection) {
+                        (Some(id), _) => self.markup().and_then(|m| m.region(id)).map(|r| r.start),
+                        (None, Some((a, _))) if self.loop_selection => Some(a),
+                        _ => None,
+                    };
+                    let restart = restart.unwrap_or(0);
                     p.toggle(restart);
                 }
                 false
@@ -350,9 +358,8 @@ impl SimpleComponent for Editor {
                 false
             }
             EditorMsg::Escape => {
-                self.selection = None;
+                self.set_selection(None);
                 self.selected = None;
-                self.waveform.set_selection(None);
                 self.sync_selection();
                 false
             }
@@ -454,6 +461,7 @@ impl Editor {
         self.selected = None;
         self.selection = None;
         self.looping = None;
+        self.loop_selection = false;
         if let Some(p) = self.player() {
             p.unload();
         }
@@ -607,9 +615,10 @@ impl Editor {
                 false
             }
             WaveEvent::Selection(sel) => {
-                self.selection = sel;
+                self.set_selection(sel);
                 false
             }
+            WaveEvent::Trim(frame) => self.trim(frame),
             WaveEvent::MarkerMoved { id, pos } => self.edit_marker(id, |m| m.pos = pos),
             WaveEvent::RegionChanged { id, start, end } => self.edit_region(id, |r| {
                 r.start = start;
@@ -689,13 +698,48 @@ impl Editor {
             });
         }
         let (a, b) = self.selection.unwrap_or((at, at));
-        self.selection = Some(if start {
+        self.set_selection(Some(if start {
             (at, b.max(at))
         } else {
             (a.min(at), at)
-        });
-        self.waveform.set_selection(self.selection);
+        }));
         false
+    }
+
+    /// Shift+click at `frame`: the edge on that side of the centre moves there.
+    /// Applies to the temporary selection, else to the selected region, else
+    /// selects from the playhead to `frame`.
+    fn trim(&mut self, frame: u64) -> bool {
+        let pick = |a, b| crate::core::trim_range(a, b, frame);
+        if let Some((a, b)) = self.selection.filter(|(a, b)| b > a) {
+            self.set_selection(Some(pick(a, b)));
+            return false;
+        }
+        if let Some(r) = self.selected_region().cloned() {
+            let (start, end) = pick(r.start, r.end);
+            return self.edit_region(r.id, |r| {
+                r.start = start;
+                r.end = end;
+            });
+        }
+        let at = self.playhead();
+        self.set_selection(Some((at.min(frame), at.max(frame))));
+        false
+    }
+
+    fn set_selection(&mut self, selection: Option<(u64, u64)>) {
+        self.selection = selection;
+        self.waveform.set_selection(selection);
+        if self.loop_selection {
+            match selection.filter(|(a, b)| b > a) {
+                Some((a, b)) => {
+                    if let Some(p) = self.player() {
+                        p.set_range(a, Some(b), true);
+                    }
+                }
+                None => self.stop_loop(),
+            }
+        }
     }
 
     fn make_region(&mut self) -> bool {
@@ -714,10 +758,18 @@ impl Editor {
             export: true,
             channels: ChannelMode::AsSource,
         };
+        let was_looping = self.loop_selection;
         let created = self.commit(vec![Change::add_region(region)]);
         if created {
-            self.selection = None;
-            self.waveform.set_selection(None);
+            self.color = (self.color + 1) % PALETTE.len() as ColorIdx;
+            self.loop_selection = false;
+            self.set_selection(None);
+            // Keep listening: the loop moves from the selection to the new region.
+            if was_looping && let Some(r) = self.selected_region().cloned() {
+                self.looping = Some(r.id);
+                self.loop_region(&r);
+                self.waveform.set_looping(self.looping);
+            }
             // Name it right away: that is what the region is for.
             self.sync_markup();
             if let Some(item) = self.selected {
@@ -792,20 +844,25 @@ impl Editor {
     }
 
     fn toggle_loop(&mut self) {
-        if self.looping.is_some() {
+        if self.looping.is_some() || self.loop_selection {
             self.stop_loop();
             return;
         }
-        if let Some(r) = self.selected_region().cloned() {
+        let range = if let Some((a, b)) = self.selection.filter(|(a, b)| b > a) {
+            self.loop_selection = true;
+            (a, b)
+        } else if let Some(r) = self.selected_region().cloned() {
             self.looping = Some(r.id);
-            self.loop_region(&r);
-            if let Some(p) = self.player() {
-                p.seek(r.start);
-                p.play();
-            }
             self.waveform.set_looping(self.looping);
+            (r.start, r.end)
         } else {
-            self.toast("Выберите регион, чтобы зациклить его");
+            self.toast("Выделите участок или выберите регион, чтобы зациклить");
+            return;
+        };
+        if let Some(p) = self.player() {
+            p.set_range(range.0, Some(range.1), true);
+            p.seek(range.0);
+            p.play();
         }
     }
 
@@ -817,6 +874,7 @@ impl Editor {
 
     fn stop_loop(&mut self) {
         self.looping = None;
+        self.loop_selection = false;
         if let Some(p) = self.player() {
             p.set_range(0, None, false);
             p.pause();

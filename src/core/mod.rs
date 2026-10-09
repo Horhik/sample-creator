@@ -113,9 +113,34 @@ impl Markup {
     }
 }
 
+/// Shift+click trimming: the edge on the clicked side of the centre of `[a, b)`
+/// moves to `at`; never collapses below one frame.
+pub fn trim_range(a: u64, b: u64, at: u64) -> (u64, u64) {
+    if at >= a + (b - a) / 2 {
+        (a, at.max(a + 1))
+    } else {
+        (at.min(b.saturating_sub(1)), b)
+    }
+}
+
 /// What the user can select in the editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Item {
     Marker(Id),
     Region(Id),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::trim_range;
+
+    #[test]
+    fn trim_moves_the_edge_on_the_clicked_side() {
+        // Selection -10..10 shifted by 10: 0..20, centre 10.
+        assert_eq!(trim_range(0, 20, 15), (0, 15)); // +5 → end
+        assert_eq!(trim_range(0, 20, 11), (0, 11)); // +1 → end
+        assert_eq!(trim_range(0, 20, 9), (9, 20)); // −1 → start
+        assert_eq!(trim_range(0, 20, 30), (0, 30)); // past the end extends
+        assert_eq!(trim_range(5, 6, 5), (5, 6)); // never empty
+    }
 }

@@ -187,10 +187,14 @@ fn editor_keys(
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     let window = window.clone();
     keys.connect_key_pressed(move |_, key, keycode, mods| {
-        // Letters by physical key, so M/I/O/R work with a Cyrillic layout too.
-        let key = gtk::prelude::WidgetExt::display(&window)
-            .translate_key(keycode, mods, 0)
-            .map_or(key, |(k, ..)| k);
+        // Letters by physical key, so M/I/O/R work with a Cyrillic layout too:
+        // take the first layout group where the key produces a Latin character.
+        let display = gtk::prelude::WidgetExt::display(&window);
+        let key = (0..4)
+            .filter_map(|group| display.translate_key(keycode, mods, group))
+            .map(|(k, ..)| k)
+            .find(|k| k.to_unicode().is_some_and(|c| c.is_ascii_graphic()))
+            .unwrap_or(key);
         let typing =
             gtk::prelude::GtkWindowExt::focus(&window).is_some_and(|w| w.is::<gtk::Text>());
         if typing || mods.contains(gdk::ModifierType::ALT_MASK) {
