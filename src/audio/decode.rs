@@ -25,6 +25,8 @@ pub struct AudioInfo {
     pub total_frames: u64,
     /// Human readable encoding, e.g. "32-bit float" or "MP3".
     pub encoding: String,
+    /// Exact sample format for WAV/BWF; `None` for compressed sources.
+    pub sample_format: Option<SampleFormat>,
     pub bext: Option<Bext>,
     pub cues: Vec<Cue>,
 }
@@ -57,6 +59,7 @@ pub fn open(path: &Path) -> Result<(AudioInfo, Box<dyn FrameSource>)> {
                 sample_rate: wav.sample_rate,
                 total_frames: wav.total_frames(),
                 encoding: wav.format.label(),
+                sample_format: Some(wav.format),
                 bext: wav.bext.clone(),
                 cues: wav.cues.clone(),
             };
@@ -244,6 +247,7 @@ impl SymphoniaSource {
                 sample_rate,
                 total_frames,
                 encoding,
+                sample_format: None,
                 bext: None,
                 cues: Vec::new(),
             },
