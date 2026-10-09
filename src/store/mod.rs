@@ -12,7 +12,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::core::history;
 use crate::core::{ChannelMode, Id, Marker, Markup, Region};
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 pub struct Library {
     conn: Connection,
@@ -21,13 +21,16 @@ pub struct Library {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileRecord {
     pub id: Id,
+    /// User's own name for the take, shown instead of the file name.
+    pub alias: Option<String>,
     pub reviewed: bool,
     pub cues_imported: bool,
 }
 
 /// Per-file counters for the file tree.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FileSummary {
+    pub alias: Option<String>,
     pub regions: usize,
     pub markers: usize,
     pub reviewed: bool,
@@ -103,6 +106,14 @@ impl Library {
                  COMMIT;",
             )?;
         }
+        if version < 2 {
+            conn.execute_batch(
+                "BEGIN;
+                 ALTER TABLE files ADD COLUMN alias TEXT;
+                 PRAGMA user_version = 2;
+                 COMMIT;",
+            )?;
+        }
         anyhow::ensure!(
             version <= SCHEMA_VERSION,
             "library was written by a newer version (schema {version})"
@@ -129,13 +140,14 @@ impl Library {
             params![fp, path, sample_rate, channels, total_frames as i64],
         )?;
         Ok(self.conn.query_row(
-            "SELECT id, reviewed, cues_imported FROM files WHERE fingerprint = ?1",
+            "SELECT id, reviewed, cues_imported, alias FROM files WHERE fingerprint = ?1",
             [fp],
             |r| {
                 Ok(FileRecord {
                     id: r.get(0)?,
                     reviewed: r.get(1)?,
                     cues_imported: r.get(2)?,
+                    alias: r.get(3)?,
                 })
             },
         )?)
@@ -145,6 +157,16 @@ impl Library {
         self.conn.execute(
             "UPDATE files SET reviewed = ?2 WHERE id = ?1",
             params![file, reviewed],
+        )?;
+        Ok(())
+    }
+
+    /// `None` (or blank) goes back to the file name.
+    pub fn set_alias(&self, file: Id, alias: Option<&str>) -> Result<()> {
+        let alias = alias.map(str::trim).filter(|a| !a.is_empty());
+        self.conn.execute(
+            "UPDATE files SET alias = ?2 WHERE id = ?1",
+            params![file, alias],
         )?;
         Ok(())
     }
@@ -203,7 +225,7 @@ impl Library {
         Ok(self
             .conn
             .prepare_cached(
-                "SELECT f.reviewed,
+                "SELECT f.alias, f.reviewed,
                         (SELECT count(*) FROM regions WHERE file_id = f.id),
                         (SELECT count(*) FROM markers WHERE file_id = f.id AND from_recorder = 0)
                  FROM files f WHERE f.path = ?1
@@ -211,9 +233,10 @@ impl Library {
             )?
             .query_row([path.to_string_lossy()], |r| {
                 Ok(FileSummary {
-                    reviewed: r.get(0)?,
-                    regions: r.get::<_, i64>(1)? as usize,
-                    markers: r.get::<_, i64>(2)? as usize,
+                    alias: r.get(0)?,
+                    reviewed: r.get(1)?,
+                    regions: r.get::<_, i64>(2)? as usize,
+                    markers: r.get::<_, i64>(3)? as usize,
                 })
             })
             .optional()?)
@@ -319,6 +342,42 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+
+        lib.set_alias(a.id, Some("  bass jam ")).unwrap();
+        let again = lib
+            .file(42, Path::new("/home/me/A.wav"), 48000, 2, 1000)
+            .unwrap();
+        assert_eq!(again.alias.as_deref(), Some("bass jam"));
+        lib.set_alias(a.id, Some("   ")).unwrap();
+        let summary = lib
+            .summary_at(Path::new("/home/me/A.wav"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(summary.alias, None);
+    }
+
+    #[test]
+    fn migrates_a_version_1_library() {
+        let dir = std::env::temp_dir().join(format!("sc-migrate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("library.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE files (id INTEGER PRIMARY KEY, fingerprint INTEGER NOT NULL UNIQUE,
+                     path TEXT NOT NULL, sample_rate INTEGER NOT NULL, channels INTEGER NOT NULL,
+                     total_frames INTEGER NOT NULL, reviewed INTEGER NOT NULL DEFAULT 0,
+                     cues_imported INTEGER NOT NULL DEFAULT 0);
+                 INSERT INTO files (fingerprint, path, sample_rate, channels, total_frames)
+                     VALUES (7, '/old.wav', 48000, 2, 10);
+                 PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        }
+        let lib = Library::open(&path).unwrap();
+        let rec = lib.file(7, Path::new("/old.wav"), 48000, 2, 10).unwrap();
+        assert_eq!(rec.alias, None);
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

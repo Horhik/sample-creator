@@ -56,6 +56,8 @@ pub struct Editor {
     waveform: Waveform,
     list: MarkupList,
     toasts: adw::ToastOverlay,
+    /// Take name: the alias if set, else the file name. Click to edit.
+    title: gtk::EditableLabel,
     /// "?" button with the full list of keys.
     help: gtk::MenuButton,
 }
@@ -90,6 +92,8 @@ pub enum EditorMsg {
     Undo,
     Redo,
     SetReviewed(bool),
+    /// Alias typed into the title; empty or the file name clears it.
+    SetAlias(String),
     ShowHelp,
 }
 
@@ -143,13 +147,7 @@ impl SimpleComponent for Editor {
 
                         gtk::Box {
                             set_spacing: 12,
-                            gtk::Label {
-                                add_css_class: "title-4",
-                                set_xalign: 0.0,
-                                set_ellipsize: gtk::pango::EllipsizeMode::Middle,
-                                #[watch]
-                                set_label: &model.file_name(),
-                            },
+                            append: &model.title,
                             gtk::Label {
                                 add_css_class: "dim-label",
                                 set_xalign: 0.0,
@@ -303,9 +301,19 @@ impl SimpleComponent for Editor {
             list,
             toasts: adw::ToastOverlay::new(),
             help: help_button(),
+            title: gtk::EditableLabel::builder()
+                .css_classes(["title-4"])
+                .tooltip_text("Нажмите, чтобы дать записи своё имя")
+                .build(),
         };
         let widgets = view_output!();
         model.start_ticking(&widgets);
+        let input = sender.input_sender().clone();
+        model.title.connect_editing_notify(move |label| {
+            if !label.is_editing() {
+                input.emit(EditorMsg::SetAlias(label.text().into()));
+            }
+        });
         root.insert_action_group("ed", Some(&actions(&sender, model.context_frame.clone())));
 
         ComponentParts { model, widgets }
@@ -392,6 +400,10 @@ impl SimpleComponent for Editor {
                 self.set_selection(None);
                 self.selected = None;
                 self.sync_selection();
+                false
+            }
+            EditorMsg::SetAlias(text) => {
+                self.set_alias(text.trim(), &sender);
                 false
             }
             EditorMsg::ShowHelp => {
@@ -511,6 +523,7 @@ impl Editor {
                     p.load(path);
                 }
                 self.file = Some(loaded);
+                self.title.set_text(&self.display_name());
                 self.sync_markup();
                 self.waveform.focus();
             }
@@ -979,6 +992,30 @@ impl Editor {
         self.list.set_selected(self.selected);
     }
 
+    fn set_alias(&mut self, text: &str, sender: &ComponentSender<Self>) {
+        let file_name = self.file_name();
+        let Some(f) = &mut self.file else { return };
+        let alias = (!text.is_empty() && text != file_name).then(|| text.to_string());
+        if alias != f.record.alias {
+            match self.library.set_alias(f.record.id, alias.as_deref()) {
+                Ok(()) => {
+                    f.record.alias = alias;
+                    sender.output(EditorOutput::Changed(f.path.clone())).ok();
+                }
+                Err(err) => self.toast(&format!("Не удалось сохранить имя: {err:#}")),
+            }
+        }
+        // Clearing the alias shows the file name again.
+        self.title.set_text(&self.display_name());
+    }
+
+    fn display_name(&self) -> String {
+        self.file
+            .as_ref()
+            .and_then(|f| f.record.alias.clone())
+            .unwrap_or_else(|| self.file_name())
+    }
+
     fn file_name(&self) -> String {
         self.file
             .as_ref()
@@ -997,12 +1034,16 @@ impl Editor {
             2 => "стерео".to_string(),
             n => format!("{n} кан."),
         };
-        let mut parts = vec![
+        let mut parts = Vec::new();
+        if f.record.alias.is_some() {
+            parts.push(self.file_name());
+        }
+        parts.extend([
             format!("{:.1} kHz", f64::from(i.sample_rate) / 1000.0).replace(".0 kHz", " kHz"),
             i.encoding.clone(),
             channels,
             format_time(i.duration_secs(), false),
-        ];
+        ]);
         if let Some(bext) = &i.bext {
             // TimeReference marks the first sample; the `time` field is when the file was closed.
             let start = bext.time_reference as f64 / f64::from(i.sample_rate);

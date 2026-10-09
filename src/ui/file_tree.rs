@@ -4,8 +4,8 @@
 //! the tree follows changes on disk (e.g. a recorder being plugged in). Nothing is
 //! ever written to the browsed directories.
 //!
-//! Each audio file shows a badge with its region count and a check mark once it
-//! is marked as reviewed, read from the markup library.
+//! Each audio file shows its alias if it has one, and a badge with its region
+//! count and a check mark once it is marked as reviewed, from the library.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -33,15 +33,18 @@ pub enum FileTreeInput {
     Refresh(PathBuf),
 }
 
-/// Badge labels of the rows currently bound, by file path.
+/// Name and badge label of a bound row.
+type RowLabels = (glib::WeakRef<gtk::Label>, glib::WeakRef<gtk::Label>);
+
+/// Labels of the rows currently bound, by file path.
 #[derive(Clone)]
 struct Badges {
     library: Rc<Library>,
-    labels: Rc<RefCell<HashMap<PathBuf, glib::WeakRef<gtk::Label>>>>,
+    labels: Rc<RefCell<HashMap<PathBuf, RowLabels>>>,
 }
 
 impl Badges {
-    fn show(&self, path: &Path, label: &gtk::Label) {
+    fn show(&self, path: &Path, name: &gtk::Label, label: &gtk::Label) {
         let summary = self
             .library
             .summary_at(path)
@@ -49,8 +52,25 @@ impl Badges {
             .flatten()
             .unwrap_or_default();
         let FileSummary {
-            regions, reviewed, ..
+            alias,
+            regions,
+            reviewed,
+            ..
         } = summary;
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match alias {
+            Some(alias) => {
+                name.set_label(&alias);
+                name.set_tooltip_text(Some(&file_name));
+            }
+            None => {
+                name.set_label(&file_name);
+                name.set_tooltip_text(None);
+            }
+        }
         let mut text = Vec::new();
         let mut tip = Vec::new();
         if regions > 0 {
@@ -67,9 +87,13 @@ impl Badges {
     }
 
     fn refresh(&self, path: &Path) {
-        let label = self.labels.borrow().get(path).and_then(|w| w.upgrade());
-        if let Some(label) = label {
-            self.show(path, &label);
+        let labels = self
+            .labels
+            .borrow()
+            .get(path)
+            .and_then(|(n, b)| Some((n.upgrade()?, b.upgrade()?)));
+        if let Some((name, badge)) = labels {
+            self.show(path, &name, &badge);
         }
     }
 }
@@ -281,6 +305,7 @@ fn row_factory(badges: Badges) -> gtk::SignalListItemFactory {
             "audio-x-generic-symbolic"
         }));
         label.set_label(&info.display_name());
+        label.set_tooltip_text(None);
         item.set_activatable(is_dir);
 
         let path = (!is_dir)
@@ -288,11 +313,11 @@ fn row_factory(badges: Badges) -> gtk::SignalListItemFactory {
             .flatten();
         match path {
             Some(path) => {
-                bind_badges.show(&path, &badge);
+                bind_badges.show(&path, &label, &badge);
                 bind_badges
                     .labels
                     .borrow_mut()
-                    .insert(path, badge.downgrade());
+                    .insert(path, (label.downgrade(), badge.downgrade()));
             }
             None => badge.set_visible(false),
         }
@@ -311,7 +336,7 @@ fn row_factory(badges: Badges) -> gtk::SignalListItemFactory {
             badges
                 .labels
                 .borrow_mut()
-                .retain(|_, w| w.upgrade().as_ref() != Some(&badge));
+                .retain(|_, (_, b)| b.upgrade().as_ref() != Some(&badge));
         }
     });
 
