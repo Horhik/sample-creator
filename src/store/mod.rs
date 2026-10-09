@@ -12,7 +12,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::core::history;
 use crate::core::{ChannelMode, Id, Marker, Markup, Region};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 pub struct Library {
     conn: Connection,
@@ -25,6 +25,29 @@ pub struct FileRecord {
     pub alias: Option<String>,
     pub reviewed: bool,
     pub cues_imported: bool,
+}
+
+/// A recording as the review page needs it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileRow {
+    pub id: Id,
+    pub path: PathBuf,
+    pub alias: Option<String>,
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub total_frames: u64,
+}
+
+impl FileRow {
+    /// Alias, or the file name without extension.
+    pub fn title(&self) -> String {
+        self.alias.clone().unwrap_or_else(|| {
+            self.path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        })
+    }
 }
 
 /// Per-file counters for the file tree.
@@ -111,6 +134,14 @@ impl Library {
                 "BEGIN;
                  ALTER TABLE files ADD COLUMN alias TEXT;
                  PRAGMA user_version = 2;
+                 COMMIT;",
+            )?;
+        }
+        if version < 3 {
+            conn.execute_batch(
+                "BEGIN;
+                 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 PRAGMA user_version = 3;
                  COMMIT;",
             )?;
         }
@@ -218,6 +249,58 @@ impl Library {
             .collect::<rusqlite::Result<_>>()?;
         markup.sort();
         Ok(markup)
+    }
+
+    /// Every region in the library with its recording, grouped by recording
+    /// (ordered by path) and sorted by start within it.
+    pub fn all_regions(&self) -> Result<Vec<(FileRow, Region)>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT f.id, f.path, f.alias, f.sample_rate, f.channels, f.total_frames,
+                    r.id, r.start, r.end, r.name, r.color, r.export, r.channel_mode
+             FROM regions r JOIN files f ON f.id = r.file_id
+             ORDER BY f.path, f.id, r.start, r.end, r.id",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            let file = FileRow {
+                id: r.get(0)?,
+                path: PathBuf::from(r.get::<_, String>(1)?),
+                alias: r.get(2)?,
+                sample_rate: r.get(3)?,
+                channels: r.get(4)?,
+                total_frames: r.get::<_, i64>(5)? as u64,
+            };
+            let region = Region {
+                id: r.get(6)?,
+                file: file.id,
+                start: r.get::<_, i64>(7)? as u64,
+                end: r.get::<_, i64>(8)? as u64,
+                name: r.get(9)?,
+                color: r.get(10)?,
+                export: r.get(11)?,
+                channels: ChannelMode::from_db(r.get(12)?),
+            };
+            Ok((file, region))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn setting(&self, key: &str) -> Option<String> {
+        self.conn
+            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| {
+                r.get(0)
+            })
+            .optional()
+            .ok()
+            .flatten()
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
     }
 
     /// Counters for the file at `path`, if we have ever seen it.
@@ -424,5 +507,30 @@ mod tests {
         history.redo(&mut markup, &lib).unwrap();
         assert_eq!(lib.markup(file).unwrap(), markup);
         assert_eq!(markup.regions[0].channels, ChannelMode::SplitMono);
+
+        let other = lib.file(2, Path::new("/0.wav"), 44100, 1, 10).unwrap().id;
+        history
+            .apply(
+                &mut markup,
+                &lib,
+                vec![Change::add_region(region(other, 3))],
+            )
+            .unwrap();
+        let all = lib.all_regions().unwrap();
+        let order: Vec<(&str, u64)> = all
+            .iter()
+            .map(|(f, r)| (f.path.to_str().unwrap(), r.start))
+            .collect();
+        assert_eq!(order, [("/0.wav", 3), ("/a.wav", 100), ("/a.wav", 500)]);
+        assert_eq!(all[0].0.title(), "0");
+    }
+
+    #[test]
+    fn settings_round_trip() {
+        let lib = Library::open_in_memory().unwrap();
+        assert_eq!(lib.setting("export.dir"), None);
+        lib.set_setting("export.dir", "/a").unwrap();
+        lib.set_setting("export.dir", "/b").unwrap();
+        assert_eq!(lib.setting("export.dir").as_deref(), Some("/b"));
     }
 }
