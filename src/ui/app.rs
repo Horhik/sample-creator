@@ -106,12 +106,17 @@ impl SimpleComponent for App {
     ) -> ComponentParts<Self> {
         adw::StyleManager::default().set_color_scheme(adw::ColorScheme::PreferDark);
 
-        let file_tree =
-            FileTree::builder()
-                .launch(root_dir.clone())
-                .forward(sender.input_sender(), |out| match out {
-                    FileTreeOutput::FileSelected(path) => AppMsg::FileSelected(path),
-                });
+        let library = Rc::new(Library::open_default().unwrap_or_else(|err| {
+            // Still usable for listening; markup just won't outlive the session.
+            eprintln!("cannot open the markup library, keeping it in memory: {err:#}");
+            Library::open_in_memory().expect("in-memory SQLite")
+        }));
+
+        let file_tree = FileTree::builder()
+            .launch((root_dir.clone(), library.clone()))
+            .forward(sender.input_sender(), |out| match out {
+                FileTreeOutput::FileSelected(path) => AppMsg::FileSelected(path),
+            });
 
         let player = match Player::new() {
             Ok(p) => Some(Rc::new(p)),
@@ -120,16 +125,12 @@ impl SimpleComponent for App {
                 None
             }
         };
-        let library = Library::open_default().unwrap_or_else(|err| {
-            // Still usable for listening; markup just won't outlive the session.
-            eprintln!("cannot open the markup library, keeping it in memory: {err:#}");
-            Library::open_in_memory().expect("in-memory SQLite")
-        });
-        let editor = Editor::builder()
-            .launch((player, Rc::new(library)))
-            .forward(sender.input_sender(), |out| match out {
-                EditorOutput::Changed(path) => AppMsg::FileChanged(path),
-            });
+        let editor =
+            Editor::builder()
+                .launch((player, library))
+                .forward(sender.input_sender(), |out| match out {
+                    EditorOutput::Changed(path) => AppMsg::FileChanged(path),
+                });
 
         let model = App {
             window: window.clone(),
@@ -165,7 +166,7 @@ impl SimpleComponent for App {
                 self.file_tree.emit(FileTreeInput::SetRoot(dir));
             }
             AppMsg::FileSelected(path) => self.editor.emit(EditorMsg::Open(path)),
-            AppMsg::FileChanged(_path) => {}
+            AppMsg::FileChanged(path) => self.file_tree.emit(FileTreeInput::Refresh(path)),
         }
     }
 }

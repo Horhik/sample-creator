@@ -3,24 +3,75 @@
 //! Built on GIO's `DirectoryList`, so folders are read asynchronously on expand and
 //! the tree follows changes on disk (e.g. a recorder being plugged in). Nothing is
 //! ever written to the browsed directories.
+//!
+//! Each audio file shows a badge with its region count and a check mark once it
+//! is marked as reviewed, read from the markup library.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
-use relm4::gtk::{self, gio, prelude::*};
+use relm4::gtk::{self, gio, glib, prelude::*};
 use relm4::{ComponentParts, ComponentSender, SimpleComponent};
 
 use crate::audio;
+use crate::store::{FileSummary, Library};
 
 const ATTRIBUTES: &str = "standard::name,standard::display-name,standard::type,\
                           standard::is-hidden,standard::symbolic-icon";
 
 pub struct FileTree {
     root: PathBuf,
+    badges: Badges,
 }
 
 #[derive(Debug)]
 pub enum FileTreeInput {
     SetRoot(PathBuf),
+    /// Markup of this file changed: update its badge.
+    Refresh(PathBuf),
+}
+
+/// Badge labels of the rows currently bound, by file path.
+#[derive(Clone)]
+struct Badges {
+    library: Rc<Library>,
+    labels: Rc<RefCell<HashMap<PathBuf, glib::WeakRef<gtk::Label>>>>,
+}
+
+impl Badges {
+    fn show(&self, path: &Path, label: &gtk::Label) {
+        let summary = self
+            .library
+            .summary_at(path)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let FileSummary {
+            regions, reviewed, ..
+        } = summary;
+        let mut text = Vec::new();
+        let mut tip = Vec::new();
+        if regions > 0 {
+            text.push(regions.to_string());
+            tip.push(format!("регионов: {regions}"));
+        }
+        if reviewed {
+            text.push("✓".to_string());
+            tip.push("просмотрен".to_string());
+        }
+        label.set_label(&text.join(" "));
+        label.set_tooltip_text((!tip.is_empty()).then(|| tip.join(", ")).as_deref());
+        label.set_visible(!text.is_empty());
+    }
+
+    fn refresh(&self, path: &Path) {
+        let label = self.labels.borrow().get(path).and_then(|w| w.upgrade());
+        if let Some(label) = label {
+            self.show(path, &label);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -34,7 +85,7 @@ pub struct FileTreeWidgets {
 }
 
 impl SimpleComponent for FileTree {
-    type Init = PathBuf;
+    type Init = (PathBuf, Rc<Library>);
     type Input = FileTreeInput;
     type Output = FileTreeOutput;
     type Widgets = FileTreeWidgets;
@@ -48,12 +99,16 @@ impl SimpleComponent for FileTree {
     }
 
     fn init(
-        root_dir: Self::Init,
+        (root_dir, library): Self::Init,
         scrolled: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
+        let badges = Badges {
+            library,
+            labels: Rc::default(),
+        };
         let list_view = gtk::ListView::builder()
-            .factory(&row_factory())
+            .factory(&row_factory(badges.clone()))
             .css_classes(["navigation-sidebar"])
             .build();
         scrolled.set_child(Some(&list_view));
@@ -78,7 +133,10 @@ impl SimpleComponent for FileTree {
         };
 
         ComponentParts {
-            model: FileTree { root: root_dir },
+            model: FileTree {
+                root: root_dir,
+                badges,
+            },
             widgets,
         }
     }
@@ -86,6 +144,7 @@ impl SimpleComponent for FileTree {
     fn update(&mut self, msg: Self::Input, _sender: ComponentSender<Self>) {
         match msg {
             FileTreeInput::SetRoot(dir) => self.root = dir,
+            FileTreeInput::Refresh(path) => self.badges.refresh(&path),
         }
     }
 
@@ -172,7 +231,7 @@ fn file_of(info: &gio::FileInfo) -> Option<gio::File> {
     info.attribute_object("standard::file").and_downcast()
 }
 
-fn row_factory() -> gtk::SignalListItemFactory {
+fn row_factory(badges: Badges) -> gtk::SignalListItemFactory {
     let factory = gtk::SignalListItemFactory::new();
 
     factory.connect_setup(|_, item| {
@@ -180,11 +239,17 @@ fn row_factory() -> gtk::SignalListItemFactory {
         let icon = gtk::Image::new();
         let label = gtk::Label::builder()
             .xalign(0.0)
+            .hexpand(true)
             .ellipsize(gtk::pango::EllipsizeMode::Middle)
+            .build();
+        let badge = gtk::Label::builder()
+            .css_classes(["caption", "dim-label", "numeric"])
+            .visible(false)
             .build();
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         content.append(&icon);
         content.append(&label);
+        content.append(&badge);
         let expander = gtk::TreeExpander::builder()
             .child(&content)
             .indent_for_icon(true)
@@ -192,7 +257,8 @@ fn row_factory() -> gtk::SignalListItemFactory {
         item.set_child(Some(&expander));
     });
 
-    factory.connect_bind(|_, item| {
+    let bind_badges = badges.clone();
+    factory.connect_bind(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().unwrap();
         let Some(row) = item.item().and_downcast::<gtk::TreeListRow>() else {
             return;
@@ -205,7 +271,8 @@ fn row_factory() -> gtk::SignalListItemFactory {
 
         let content = expander.child().and_downcast::<gtk::Box>().unwrap();
         let icon = content.first_child().and_downcast::<gtk::Image>().unwrap();
-        let label = content.last_child().and_downcast::<gtk::Label>().unwrap();
+        let label = icon.next_sibling().and_downcast::<gtk::Label>().unwrap();
+        let badge = content.last_child().and_downcast::<gtk::Label>().unwrap();
 
         let is_dir = info.file_type() == gio::FileType::Directory;
         icon.set_icon_name(Some(if is_dir {
@@ -215,6 +282,37 @@ fn row_factory() -> gtk::SignalListItemFactory {
         }));
         label.set_label(&info.display_name());
         item.set_activatable(is_dir);
+
+        let path = (!is_dir)
+            .then(|| file_of(&info).and_then(|f| f.path()))
+            .flatten();
+        match path {
+            Some(path) => {
+                bind_badges.show(&path, &badge);
+                bind_badges
+                    .labels
+                    .borrow_mut()
+                    .insert(path, badge.downgrade());
+            }
+            None => badge.set_visible(false),
+        }
+    });
+
+    // Recycled rows must stop answering for the file they showed before.
+    factory.connect_unbind(move |_, item| {
+        let item = item.downcast_ref::<gtk::ListItem>().unwrap();
+        let badge = item
+            .child()
+            .and_downcast::<gtk::TreeExpander>()
+            .and_then(|e| e.child())
+            .and_then(|c| c.last_child())
+            .and_downcast::<gtk::Label>();
+        if let Some(badge) = badge {
+            badges
+                .labels
+                .borrow_mut()
+                .retain(|_, w| w.upgrade().as_ref() != Some(&badge));
+        }
     });
 
     factory
