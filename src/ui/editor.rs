@@ -10,6 +10,7 @@ use relm4::adw::{self, prelude::*};
 use relm4::gtk;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent};
 
+use super::context_menu;
 use super::markup_list::{ListEvent, MarkupList};
 use super::waveform::{WaveEvent, Waveform, format_time};
 use crate::audio::decode::{self, AudioInfo};
@@ -47,6 +48,9 @@ pub struct Editor {
     /// neighbouring regions differ; picking a colour with nothing selected sets it.
     color: ColorIdx,
 
+    /// Frame under the last right click, for "marker here".
+    context_frame: Rc<std::cell::Cell<u64>>,
+
     waveform: Waveform,
     list: MarkupList,
     toasts: adw::ToastOverlay,
@@ -67,6 +71,7 @@ pub enum EditorMsg {
     List(ListEvent),
 
     AddMarker,
+    MarkerAt(u64),
     SetIn,
     SetOut,
     MakeRegion,
@@ -265,12 +270,14 @@ impl SimpleComponent for Editor {
             looping: None,
             loop_selection: false,
             color: 0,
+            context_frame: Rc::default(),
             waveform,
             list,
             toasts: adw::ToastOverlay::new(),
         };
         let widgets = view_output!();
         model.start_ticking(&widgets);
+        root.insert_action_group("ed", Some(&actions(&sender, model.context_frame.clone())));
 
         ComponentParts { model, widgets }
     }
@@ -319,9 +326,10 @@ impl SimpleComponent for Editor {
                 self.waveform.zoom_fit();
                 false
             }
-            EditorMsg::Wave(e) => self.on_wave(e),
+            EditorMsg::Wave(e) => self.on_wave(e, &sender),
             EditorMsg::List(e) => self.on_list(e),
-            EditorMsg::AddMarker => self.add_marker(),
+            EditorMsg::AddMarker => self.add_marker(self.playhead()),
+            EditorMsg::MarkerAt(frame) => self.add_marker(frame),
             EditorMsg::SetIn => self.set_edge(true),
             EditorMsg::SetOut => self.set_edge(false),
             EditorMsg::MakeRegion => self.make_region(),
@@ -601,7 +609,7 @@ impl Editor {
         changed
     }
 
-    fn on_wave(&mut self, e: WaveEvent) -> bool {
+    fn on_wave(&mut self, e: WaveEvent, sender: &ComponentSender<Self>) -> bool {
         match e {
             WaveEvent::Seek(frame) => {
                 if let Some(p) = self.player() {
@@ -619,6 +627,10 @@ impl Editor {
                 false
             }
             WaveEvent::Trim(frame) => self.trim(frame),
+            WaveEvent::Context { x, y, frame } => {
+                self.show_context_menu(x, y, frame, sender);
+                false
+            }
             WaveEvent::MarkerMoved { id, pos } => self.edit_marker(id, |m| m.pos = pos),
             WaveEvent::RegionChanged { id, start, end } => self.edit_region(id, |r| {
                 r.start = start;
@@ -631,6 +643,31 @@ impl Editor {
                 false
             }
         }
+    }
+
+    fn show_context_menu(&self, x: f64, y: f64, frame: u64, sender: &ComponentSender<Self>) {
+        if self.file.is_none() {
+            return;
+        }
+        self.context_frame.set(frame);
+        let history = self
+            .file
+            .as_ref()
+            .and_then(|f| self.histories.get(&f.record.id));
+        let region = self.selected_region();
+        let ctx = context_menu::Context {
+            has_selection: self.selection.is_some_and(|(a, b)| b > a),
+            marker_selected: matches!(self.selected, Some(Item::Marker(_))),
+            region_selected: region.is_some(),
+            region_exported: region.is_some_and(|r| r.export),
+            looping: self.looping.is_some() || self.loop_selection,
+            can_undo: history.is_some_and(History::can_undo),
+            can_redo: history.is_some_and(History::can_redo),
+        };
+        let input = sender.input_sender().clone();
+        context_menu::show(self.waveform.canvas(), x, y, &ctx, move |color| {
+            input.emit(EditorMsg::SetColor(color));
+        });
     }
 
     fn on_list(&mut self, e: ListEvent) -> bool {
@@ -672,12 +709,12 @@ impl Editor {
         }
     }
 
-    fn add_marker(&mut self) -> bool {
+    fn add_marker(&mut self, pos: u64) -> bool {
         let Some(f) = &self.file else { return false };
         let marker = Marker {
             id: 0,
             file: f.record.id,
-            pos: self.playhead(),
+            pos,
             name: String::new(),
             color: self.color,
             from_recorder: false,
@@ -985,4 +1022,37 @@ impl Editor {
             (b - a) as f64 / rate
         )
     }
+}
+
+/// `ed.*` actions used by the context menu. Each one just sends the message the
+/// matching key would send.
+fn actions(
+    sender: &ComponentSender<Editor>,
+    context_frame: Rc<std::cell::Cell<u64>>,
+) -> gtk::gio::SimpleActionGroup {
+    let group = gtk::gio::SimpleActionGroup::new();
+    let add = |name: &str, msg: fn() -> EditorMsg| {
+        let action = gtk::gio::SimpleAction::new(name, None);
+        let input = sender.input_sender().clone();
+        action.connect_activate(move |_, _| input.emit(msg()));
+        group.add_action(&action);
+    };
+    add("play", || EditorMsg::TogglePlay);
+    add("loop", || EditorMsg::ToggleLoop);
+    add("region", || EditorMsg::MakeRegion);
+    add("marker", || EditorMsg::AddMarker);
+    add("set-in", || EditorMsg::SetIn);
+    add("set-out", || EditorMsg::SetOut);
+    add("rename", || EditorMsg::RenameSelected);
+    add("export", || EditorMsg::ToggleExport);
+    add("delete", || EditorMsg::DeleteSelected);
+    add("undo", || EditorMsg::Undo);
+    add("redo", || EditorMsg::Redo);
+    add("zoom-fit", || EditorMsg::ZoomFit);
+
+    let here = gtk::gio::SimpleAction::new("marker-here", None);
+    let input = sender.input_sender().clone();
+    here.connect_activate(move |_, _| input.emit(EditorMsg::MarkerAt(context_frame.get())));
+    group.add_action(&here);
+    group
 }

@@ -27,7 +27,7 @@ const GRAB_PX: f64 = 5.0;
 /// Pointer travel (px) that turns a click into a drag.
 const DRAG_THRESHOLD: f64 = 3.0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WaveEvent {
     Seek(u64),
     Select(Option<Item>),
@@ -46,6 +46,12 @@ pub enum WaveEvent {
     Activate(Item),
     /// Shift+click: move the nearer-to-centre edge of the selection or region here.
     Trim(u64),
+    /// Right click at widget coordinates, over `frame`.
+    Context {
+        x: f64,
+        y: f64,
+        frame: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -245,6 +251,11 @@ impl Waveform {
 
     pub fn widget(&self) -> &gtk::Box {
         &self.root
+    }
+
+    /// The main drawing area, e.g. to anchor a popover.
+    pub fn canvas(&self) -> &gtk::DrawingArea {
+        &self.main
     }
 
     pub fn focus(&self) {
@@ -454,6 +465,32 @@ impl Waveform {
             }
         });
         self.main.add_controller(double);
+
+        let context = gtk::GestureClick::new();
+        context.set_button(gdk::BUTTON_SECONDARY);
+        let wf = self.clone();
+        context.connect_pressed(move |_, _, x, y| {
+            wf.main.grab_focus();
+            let (hit, frame) = {
+                let s = wf.state.borrow();
+                (s.hit(x, y), s.frame_at(x))
+            };
+            let item = match hit {
+                Hit::Marker(id) => Some(Item::Marker(id)),
+                Hit::RegionEdge(id, _) | Hit::RegionLabel(id) | Hit::RegionBody(id) => {
+                    Some(Item::Region(id))
+                }
+                Hit::Nothing => None,
+            };
+            // Right click on an item acts on it; on empty space keeps the selection.
+            let mut events = Vec::new();
+            if item.is_some() {
+                events.push(WaveEvent::Select(item));
+            }
+            events.push(WaveEvent::Context { x, y, frame });
+            wf.emit(&events);
+        });
+        self.main.add_controller(context);
 
         let motion = gtk::EventControllerMotion::new();
         let wf = self.clone();
