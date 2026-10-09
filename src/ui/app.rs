@@ -227,6 +227,7 @@ fn editor_keys(
             (_, gdk::Key::Tab) => EditorMsg::Step(true),
             (_, gdk::Key::ISO_Left_Tab) => EditorMsg::Step(false),
             (_, gdk::Key::Escape) => EditorMsg::Escape,
+            (_, gdk::Key::question | gdk::Key::F1) => EditorMsg::ShowHelp,
             (_, k) => match k.to_unicode().and_then(|c| c.to_digit(10)) {
                 Some(d @ 1..=8) => EditorMsg::SetColor(d as u8 - 1),
                 _ => return glib::Propagation::Proceed,

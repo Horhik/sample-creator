@@ -56,6 +56,8 @@ pub struct Editor {
     waveform: Waveform,
     list: MarkupList,
     toasts: adw::ToastOverlay,
+    /// "?" button with the full list of keys.
+    help: gtk::MenuButton,
 }
 
 #[derive(Debug)]
@@ -88,6 +90,7 @@ pub enum EditorMsg {
     Undo,
     Redo,
     SetReviewed(bool),
+    ShowHelp,
 }
 
 #[derive(Debug)]
@@ -122,7 +125,11 @@ impl SimpleComponent for Editor {
 
             add_named[Some("editor")] = &model.toasts.clone() -> adw::ToastOverlay {
                 #[wrap(Some)]
-                set_child = &gtk::Paned {
+                set_child = &gtk::Box {
+                set_orientation: gtk::Orientation::Vertical,
+
+                gtk::Paned {
+                    set_vexpand: true,
                     set_orientation: gtk::Orientation::Vertical,
                     set_position: 420,
                     set_shrink_start_child: false,
@@ -230,9 +237,28 @@ impl SimpleComponent for Editor {
                     set_end_child = &gtk::Box {
                         set_margin_start: 12,
                         set_margin_end: 12,
-                        set_margin_bottom: 12,
+                        set_margin_bottom: 6,
                         append: model.list.widget(),
                     },
+                },
+
+                // Always-visible cheat line; changes with what is selected.
+                gtk::Box {
+                    add_css_class: "toolbar",
+                    set_spacing: 6,
+                    set_margin_start: 6,
+                    set_margin_end: 6,
+
+                    gtk::Label {
+                        set_hexpand: true,
+                        set_xalign: 0.0,
+                        set_wrap: true,
+                        add_css_class: "caption",
+                        #[watch]
+                        set_markup: &model.hints(),
+                    },
+                    append: &model.help.clone(),
+                },
                 },
             },
 
@@ -276,6 +302,7 @@ impl SimpleComponent for Editor {
             waveform,
             list,
             toasts: adw::ToastOverlay::new(),
+            help: help_button(),
         };
         let widgets = view_output!();
         model.start_ticking(&widgets);
@@ -365,6 +392,10 @@ impl SimpleComponent for Editor {
                 self.set_selection(None);
                 self.selected = None;
                 self.sync_selection();
+                false
+            }
+            EditorMsg::ShowHelp => {
+                self.help.popup();
                 false
             }
             EditorMsg::Undo | EditorMsg::Redo => self.undo_redo(matches!(msg, EditorMsg::Redo)),
@@ -767,6 +798,12 @@ impl Editor {
             self.toast("Сначала выделите участок мышью или клавишами I и O");
             return false;
         };
+        // I and O pressed at almost the same moment make a useless sliver.
+        let min_len = u64::from(f.info.sample_rate) / 100;
+        if end - start < min_len {
+            self.toast("Участок короче 10 мс — растяните выделение");
+            return false;
+        }
         let region = Region {
             id: 0,
             file: f.record.id,
@@ -978,6 +1015,57 @@ impl Editor {
         parts.join(" · ")
     }
 
+    /// Pango markup for the hint line: the keys that make sense right now.
+    fn hints(&self) -> String {
+        if self.file.is_none() {
+            return String::new();
+        }
+        let hints: &[(&str, &str)] = if self.selection.is_some_and(|(a, b)| b > a) {
+            &[
+                ("R", "регион из выделения"),
+                ("Shift+клик", "подрезать край"),
+                ("I / O", "край по плейхеду"),
+                ("1–8", "цвет нового региона"),
+                ("Esc", "снять выделение"),
+            ]
+        } else if self.selected_region().is_some() {
+            &[
+                ("Enter", "имя"),
+                ("1–8", "цвет"),
+                ("E", "экспорт"),
+                ("Shift+клик", "подрезать край"),
+                ("I / O", "край по плейхеду"),
+                ("Del", "удалить"),
+                ("Esc", "снять выбор"),
+            ]
+        } else if matches!(self.selected, Some(Item::Marker(_))) {
+            &[
+                ("Enter", "имя"),
+                ("1–8", "цвет"),
+                ("тащите", "сдвинуть"),
+                ("Del", "удалить"),
+                ("Esc", "снять выбор"),
+            ]
+        } else {
+            &[
+                ("Space", "играть"),
+                ("тащите мышью", "выделить"),
+                ("M", "маркер"),
+                ("I / O", "выделение по плейхеду"),
+                ("Tab", "следующий"),
+                ("правая кнопка", "все действия"),
+            ]
+        };
+        let mut parts: Vec<String> = hints
+            .iter()
+            .map(|(key, what)| format!("{}  {what}", kbd(key)))
+            .collect();
+        if !self.auto_loop {
+            parts.push(format!("{}  цикл выключен", kbd("L")));
+        }
+        parts.join("     ")
+    }
+
     fn selection_label(&self) -> String {
         let (Some((a, b)), Some(f)) = (self.selection, &self.file) else {
             return String::new();
@@ -1024,4 +1112,102 @@ fn actions(
     here.connect_activate(move |_, _| input.emit(EditorMsg::MarkerAt(context_frame.get())));
     group.add_action(&here);
     group
+}
+
+/// A key cap in Pango markup.
+fn kbd(key: &str) -> String {
+    format!(
+        "<span weight=\"bold\" bgcolor=\"#808080\" bgalpha=\"22%\"> {} </span>",
+        gtk::glib::markup_escape_text(key)
+    )
+}
+
+const ALL_KEYS: &[(&str, &[(&str, &str)])] = &[
+    (
+        "Прослушивание",
+        &[
+            ("Space", "воспроизвести / пауза"),
+            ("Home", "в начало"),
+            ("← / →", "назад / вперёд на 1 с (Shift — 10 с)"),
+            ("L", "зацикливать выделение и выбранный регион (вкл/выкл)"),
+            ("колесо", "прокрутка; Ctrl+колесо — зум"),
+            ("+ / − / 0", "приблизить / отдалить / весь файл"),
+        ],
+    ),
+    (
+        "Разметка",
+        &[
+            ("тащите мышью", "выделить участок"),
+            (
+                "Shift+клик",
+                "подрезать ближний к клику край выделения или региона",
+            ),
+            ("I / O", "начало / конец по плейхеду"),
+            ("R", "регион из выделения"),
+            ("M", "маркер у плейхеда"),
+            ("правая кнопка", "меню: маркер здесь, цвет и всё остальное"),
+        ],
+    ),
+    (
+        "Выбранный маркер или регион",
+        &[
+            ("клик", "выбрать; двойной клик — переименовать"),
+            ("Enter / F2", "переименовать"),
+            ("1–8", "цвет"),
+            ("E", "экспорт вкл/выкл"),
+            ("Del", "удалить"),
+            ("Tab / Shift+Tab", "следующий / предыдущий"),
+            ("Esc", "снять выделение и выбор"),
+        ],
+    ),
+    (
+        "Правка",
+        &[
+            ("Ctrl+Z", "отменить"),
+            ("Ctrl+Shift+Z / Ctrl+Y", "повторить"),
+            ("? / F1", "эта памятка"),
+        ],
+    ),
+];
+
+fn help_button() -> gtk::MenuButton {
+    let grid = gtk::Grid::builder()
+        .row_spacing(4)
+        .column_spacing(16)
+        .margin_start(12)
+        .margin_end(12)
+        .margin_top(12)
+        .margin_bottom(12)
+        .build();
+    let mut row = 0;
+    for (section, keys) in ALL_KEYS {
+        let title = gtk::Label::builder()
+            .label(*section)
+            .xalign(0.0)
+            .css_classes(["heading"])
+            .margin_top(if row == 0 { 0 } else { 8 })
+            .build();
+        grid.attach(&title, 0, row, 2, 1);
+        row += 1;
+        for (key, what) in *keys {
+            let cap = gtk::Label::builder().xalign(1.0).build();
+            cap.set_markup(&kbd(key));
+            grid.attach(&cap, 0, row, 1, 1);
+            grid.attach(
+                &gtk::Label::builder().label(*what).xalign(0.0).build(),
+                1,
+                row,
+                1,
+                1,
+            );
+            row += 1;
+        }
+    }
+    let popover = gtk::Popover::builder().child(&grid).build();
+    gtk::MenuButton::builder()
+        .icon_name("help-about-symbolic")
+        .tooltip_text("Все клавиши (? или F1)")
+        .css_classes(["flat", "circular"])
+        .popover(&popover)
+        .build()
 }
