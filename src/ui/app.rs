@@ -9,14 +9,18 @@ use relm4::{
 
 use super::editor::{Editor, EditorMsg, EditorOutput};
 use super::file_tree::{FileTree, FileTreeInput, FileTreeOutput};
+use super::review::{Review, ReviewMsg, ReviewOutput};
 use crate::audio::player::Player;
+use crate::core::{Id, Item};
 use crate::store::Library;
 
 pub struct App {
     window: adw::ApplicationWindow,
     file_tree: Controller<FileTree>,
     editor: Controller<Editor>,
+    review: Controller<Review>,
     root: PathBuf,
+    view_stack: adw::ViewStack,
 }
 
 #[derive(Debug)]
@@ -25,6 +29,8 @@ pub enum AppMsg {
     SetRoot(PathBuf),
     FileSelected(PathBuf),
     FileChanged(PathBuf),
+    /// From the review page: show this region in the editor.
+    OpenRegion(PathBuf, Id),
 }
 
 #[relm4::component(pub)]
@@ -89,11 +95,7 @@ impl SimpleComponent for App {
                         set_end_child: Some(model.editor.widget()),
                     },
 
-                    add_titled_with_icon[Some("review"), "Обзор регионов", "view-list-symbolic"] = &adw::StatusPage {
-                        set_icon_name: Some("view-list-symbolic"),
-                        set_title: "Регионов пока нет",
-                        set_description: Some("Выделенные регионы из всех файлов появятся здесь"),
-                    },
+                    add_titled_with_icon[Some("review"), "Обзор регионов", "view-list-symbolic"] = model.review.widget(),
                 },
             },
         }
@@ -125,6 +127,11 @@ impl SimpleComponent for App {
                 None
             }
         };
+        let review = Review::builder()
+            .launch((player.clone(), library.clone()))
+            .forward(sender.input_sender(), |out| match out {
+                ReviewOutput::Open(path, id) => AppMsg::OpenRegion(path, id),
+            });
         let editor =
             Editor::builder()
                 .launch((player, library))
@@ -132,15 +139,37 @@ impl SimpleComponent for App {
                     EditorOutput::Changed(path) => AppMsg::FileChanged(path),
                 });
 
-        let model = App {
+        let mut model = App {
             window: window.clone(),
             file_tree,
             editor,
+            review,
             root: root_dir,
+            view_stack: adw::ViewStack::new(),
         };
         let widgets = view_output!();
+        model.view_stack = widgets.view_stack.clone();
 
-        window.add_controller(editor_keys(&window, model.editor.sender().clone()));
+        // The player is shared: whichever page becomes visible takes it over.
+        let (editor_tx, review_tx) = (model.editor.sender().clone(), model.review.sender().clone());
+        widgets
+            .view_stack
+            .connect_visible_child_name_notify(move |stack| {
+                if stack.visible_child_name().as_deref() == Some("review") {
+                    editor_tx.emit(EditorMsg::Pause);
+                    review_tx.emit(ReviewMsg::Refresh);
+                } else {
+                    review_tx.emit(ReviewMsg::Leave);
+                    editor_tx.emit(EditorMsg::Reattach);
+                }
+            });
+
+        window.add_controller(editor_keys(
+            &window,
+            &widgets.view_stack,
+            model.editor.sender().clone(),
+            model.review.sender().clone(),
+        ));
         if let Some(path) = open_file {
             model.editor.emit(EditorMsg::Open(path));
         }
@@ -167,6 +196,10 @@ impl SimpleComponent for App {
             }
             AppMsg::FileSelected(path) => self.editor.emit(EditorMsg::Open(path)),
             AppMsg::FileChanged(path) => self.file_tree.emit(FileTreeInput::Refresh(path)),
+            AppMsg::OpenRegion(path, id) => {
+                self.view_stack.set_visible_child_name("markup");
+                self.editor.emit(EditorMsg::OpenAt(path, Item::Region(id)));
+            }
         }
     }
 }
@@ -181,12 +214,22 @@ fn dir_title(dir: &std::path::Path) -> String {
 /// while typing into a text field.
 fn editor_keys(
     window: &adw::ApplicationWindow,
+    stack: &adw::ViewStack,
     editor: relm4::Sender<EditorMsg>,
+    review: relm4::Sender<ReviewMsg>,
 ) -> gtk::EventControllerKey {
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let window = window.clone();
+    let (window, stack) = (window.clone(), stack.clone());
     keys.connect_key_pressed(move |_, key, keycode, mods| {
+        // On the review page the editor keys do not apply; Space stops a preview.
+        if stack.visible_child_name().as_deref() == Some("review") {
+            if key == gdk::Key::space {
+                review.emit(ReviewMsg::Leave);
+                return glib::Propagation::Stop;
+            }
+            return glib::Propagation::Proceed;
+        }
         // Letters by physical key, so M/I/O/R work with a Cyrillic layout too:
         // take the first layout group where the key produces a Latin character.
         let display = gtk::prelude::WidgetExt::display(&window);

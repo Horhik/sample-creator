@@ -95,6 +95,11 @@ pub enum EditorMsg {
     /// Alias typed into the title; empty or the file name clears it.
     SetAlias(String),
     ShowHelp,
+    Pause,
+    /// Back from the review page: reload the player and pick up markup edited there.
+    Reattach,
+    /// Open `path` (if needed) and select `item`.
+    OpenAt(PathBuf, Item),
 }
 
 #[derive(Debug)]
@@ -406,6 +411,21 @@ impl SimpleComponent for Editor {
                 self.set_alias(text.trim(), &sender);
                 false
             }
+            EditorMsg::Pause => {
+                if let Some(p) = self.player() {
+                    p.pause();
+                }
+                false
+            }
+            EditorMsg::Reattach => {
+                self.reattach();
+                false
+            }
+            EditorMsg::OpenAt(path, item) => {
+                self.open(path);
+                self.select_and_show(item);
+                false
+            }
             EditorMsg::ShowHelp => {
                 self.help.popup();
                 false
@@ -572,6 +592,43 @@ impl Editor {
             markup,
             _peaks: job,
         })
+    }
+
+    fn reattach(&mut self) {
+        let Some(f) = &mut self.file else { return };
+        if let Ok(markup) = self.library.markup(f.record.id)
+            && markup != f.markup
+        {
+            // Edited elsewhere: our undo steps no longer describe the stored state.
+            f.markup = markup;
+            self.histories.remove(&f.record.id);
+        }
+        if let Some(p) = self.player.as_deref() {
+            p.load(f.path.clone());
+        }
+        self.applied_loop.set(None);
+        let markup = &f.markup;
+        let exists = match self.selected {
+            Some(Item::Marker(id)) => markup.marker(id).is_some(),
+            Some(Item::Region(id)) => markup.region(id).is_some(),
+            None => true,
+        };
+        if !exists {
+            self.selected = None;
+        }
+        self.sync_markup();
+    }
+
+    fn select_and_show(&mut self, item: Item) {
+        let pos = match item {
+            Item::Marker(id) => self.markup().and_then(|m| m.marker(id)).map(|m| m.pos),
+            Item::Region(id) => self.markup().and_then(|m| m.region(id)).map(|r| r.start),
+        };
+        let Some(pos) = pos else { return };
+        self.set_selection(None);
+        self.selected = Some(item);
+        self.seek(pos);
+        self.sync_markup();
     }
 
     fn seek(&self, frame: u64) {
