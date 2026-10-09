@@ -1,5 +1,8 @@
-//! Right-hand pane: file metadata, waveform and transport for the selected file.
+//! Right-hand pane: metadata, waveform, transport and the markup list for the
+//! selected file. Owns the file's markup and undo history; every edit goes
+//! through [`History`] and is in the library before the next event is handled.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -7,22 +10,41 @@ use relm4::adw::{self, prelude::*};
 use relm4::gtk;
 use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent};
 
-use super::waveform::{Marker, Waveform, format_time};
+use super::markup_list::{ListEvent, MarkupList};
+use super::waveform::{WaveEvent, Waveform, format_time};
 use crate::audio::decode::{self, AudioInfo};
 use crate::audio::peaks::{self, PeakJob};
 use crate::audio::player::Player;
+use crate::core::history::{Change, History};
+use crate::core::{ChannelMode, ColorIdx, Id, Item, Marker, Markup, RECORDER_MARK_COLOR, Region};
+use crate::store::{FileRecord, Library};
 
 struct Loaded {
     path: PathBuf,
     info: AudioInfo,
+    record: FileRecord,
+    markup: Markup,
     _peaks: PeakJob,
 }
 
 pub struct Editor {
     player: Option<Rc<Player>>,
+    library: Rc<Library>,
     file: Option<Loaded>,
     error: Option<String>,
+    /// Per file, so undo survives switching between takes within a session.
+    histories: HashMap<Id, History>,
+
+    selected: Option<Item>,
+    /// Range picked with the mouse or I/O, not yet a region.
+    selection: Option<(u64, u64)>,
+    looping: Option<Id>,
+    /// Colour for new markers and regions: the last one picked.
+    color: ColorIdx,
+
     waveform: Waveform,
+    list: MarkupList,
+    toasts: adw::ToastOverlay,
 }
 
 #[derive(Debug)]
@@ -32,17 +54,41 @@ pub enum EditorMsg {
     ToStart,
     /// Relative seek in seconds.
     Nudge(f64),
-    Seek(u64),
     ZoomIn,
     ZoomOut,
     ZoomFit,
+
+    Wave(WaveEvent),
+    List(ListEvent),
+
+    AddMarker,
+    SetIn,
+    SetOut,
+    MakeRegion,
+    RenameSelected,
+    SetColor(ColorIdx),
+    ToggleExport,
+    ToggleLoop,
+    DeleteSelected,
+    /// Select the next (`true`) or previous marker/region and jump to it.
+    Step(bool),
+    Escape,
+    Undo,
+    Redo,
+    SetReviewed(bool),
+}
+
+#[derive(Debug)]
+pub enum EditorOutput {
+    /// Markup or review state of this file changed (for the file tree).
+    Changed(PathBuf),
 }
 
 #[relm4::component(pub)]
 impl SimpleComponent for Editor {
-    type Init = Option<Rc<Player>>;
+    type Init = (Option<Rc<Player>>, Rc<Library>);
     type Input = EditorMsg;
-    type Output = ();
+    type Output = EditorOutput;
 
     view! {
         #[root]
@@ -62,84 +108,118 @@ impl SimpleComponent for Editor {
                 set_description: model.error.as_deref(),
             },
 
-            add_named[Some("editor")] = &gtk::Box {
-                set_orientation: gtk::Orientation::Vertical,
-                set_spacing: 8,
-                set_margin_all: 12,
+            add_named[Some("editor")] = &model.toasts.clone() -> adw::ToastOverlay {
+                #[wrap(Some)]
+                set_child = &gtk::Paned {
+                    set_orientation: gtk::Orientation::Vertical,
+                    set_position: 420,
+                    set_shrink_start_child: false,
+                    set_shrink_end_child: false,
 
-                gtk::Box {
-                    set_spacing: 12,
-                    gtk::Label {
-                        add_css_class: "title-4",
-                        set_xalign: 0.0,
-                        set_ellipsize: gtk::pango::EllipsizeMode::Middle,
-                        #[watch]
-                        set_label: &model.file_name(),
-                    },
-                    gtk::Label {
-                        add_css_class: "dim-label",
-                        set_xalign: 0.0,
-                        set_hexpand: true,
-                        set_ellipsize: gtk::pango::EllipsizeMode::End,
-                        #[watch]
-                        set_label: &model.file_details(),
-                    },
-                },
+                    #[wrap(Some)]
+                    set_start_child = &gtk::Box {
+                        set_orientation: gtk::Orientation::Vertical,
+                        set_spacing: 8,
+                        set_margin_all: 12,
 
-                append: model.waveform.widget(),
+                        gtk::Box {
+                            set_spacing: 12,
+                            gtk::Label {
+                                add_css_class: "title-4",
+                                set_xalign: 0.0,
+                                set_ellipsize: gtk::pango::EllipsizeMode::Middle,
+                                #[watch]
+                                set_label: &model.file_name(),
+                            },
+                            gtk::Label {
+                                add_css_class: "dim-label",
+                                set_xalign: 0.0,
+                                set_hexpand: true,
+                                set_ellipsize: gtk::pango::EllipsizeMode::End,
+                                #[watch]
+                                set_label: &model.file_details(),
+                            },
+                            gtk::ToggleButton {
+                                set_label: "Просмотрен",
+                                set_tooltip_text: Some("Отметить запись как разобранную"),
+                                add_css_class: "flat",
+                                #[watch]
+                                #[block_signal(reviewed_toggled)]
+                                set_active: model.file.as_ref().is_some_and(|f| f.record.reviewed),
+                                connect_toggled[sender] => move |b| {
+                                    sender.input(EditorMsg::SetReviewed(b.is_active()));
+                                } @reviewed_toggled,
+                            },
+                        },
 
-                gtk::Box {
-                    set_spacing: 6,
+                        append: model.waveform.widget(),
 
-                    gtk::Button {
-                        set_icon_name: "media-skip-backward-symbolic",
-                        set_tooltip_text: Some("В начало (Home)"),
-                        add_css_class: "flat",
-                        connect_clicked => EditorMsg::ToStart,
+                        gtk::Box {
+                            set_spacing: 6,
+
+                            gtk::Button {
+                                set_icon_name: "media-skip-backward-symbolic",
+                                set_tooltip_text: Some("В начало (Home)"),
+                                add_css_class: "flat",
+                                connect_clicked => EditorMsg::ToStart,
+                            },
+                            #[name = "play_button"]
+                            gtk::Button {
+                                set_icon_name: "media-playback-start-symbolic",
+                                set_tooltip_text: Some("Воспроизвести / пауза (Space)"),
+                                add_css_class: "circular",
+                                add_css_class: "suggested-action",
+                                #[watch]
+                                set_sensitive: model.player.is_some(),
+                                connect_clicked => EditorMsg::TogglePlay,
+                            },
+                            #[name = "time_label"]
+                            gtk::Label {
+                                add_css_class: "numeric",
+                                set_margin_start: 8,
+                                set_xalign: 0.0,
+                            },
+                            #[name = "status_label"]
+                            gtk::Label {
+                                add_css_class: "dim-label",
+                                add_css_class: "caption",
+                                set_hexpand: true,
+                                set_xalign: 0.0,
+                                set_margin_start: 12,
+                            },
+                            gtk::Label {
+                                add_css_class: "dim-label",
+                                add_css_class: "caption",
+                                #[watch]
+                                set_label: &model.selection_label(),
+                            },
+                            gtk::Button {
+                                set_icon_name: "zoom-out-symbolic",
+                                set_tooltip_text: Some("Отдалить (−)"),
+                                add_css_class: "flat",
+                                connect_clicked => EditorMsg::ZoomOut,
+                            },
+                            gtk::Button {
+                                set_icon_name: "zoom-fit-best-symbolic",
+                                set_tooltip_text: Some("Весь файл (0)"),
+                                add_css_class: "flat",
+                                connect_clicked => EditorMsg::ZoomFit,
+                            },
+                            gtk::Button {
+                                set_icon_name: "zoom-in-symbolic",
+                                set_tooltip_text: Some("Приблизить (+)"),
+                                add_css_class: "flat",
+                                connect_clicked => EditorMsg::ZoomIn,
+                            },
+                        },
                     },
-                    #[name = "play_button"]
-                    gtk::Button {
-                        set_icon_name: "media-playback-start-symbolic",
-                        set_tooltip_text: Some("Воспроизвести / пауза (Space)"),
-                        add_css_class: "circular",
-                        add_css_class: "suggested-action",
-                        #[watch]
-                        set_sensitive: model.player.is_some(),
-                        connect_clicked => EditorMsg::TogglePlay,
-                    },
-                    #[name = "time_label"]
-                    gtk::Label {
-                        add_css_class: "numeric",
-                        set_margin_start: 8,
-                        set_xalign: 0.0,
-                    },
-                    #[name = "status_label"]
-                    gtk::Label {
-                        add_css_class: "dim-label",
-                        add_css_class: "caption",
-                        set_hexpand: true,
-                        set_xalign: 0.0,
+
+                    #[wrap(Some)]
+                    set_end_child = &gtk::Box {
                         set_margin_start: 12,
-                        #[watch]
-                        set_label: if model.player.is_none() { "нет аудиоустройства" } else { "" },
-                    },
-                    gtk::Button {
-                        set_icon_name: "zoom-out-symbolic",
-                        set_tooltip_text: Some("Отдалить (−)"),
-                        add_css_class: "flat",
-                        connect_clicked => EditorMsg::ZoomOut,
-                    },
-                    gtk::Button {
-                        set_icon_name: "zoom-fit-best-symbolic",
-                        set_tooltip_text: Some("Весь файл (0)"),
-                        add_css_class: "flat",
-                        connect_clicked => EditorMsg::ZoomFit,
-                    },
-                    gtk::Button {
-                        set_icon_name: "zoom-in-symbolic",
-                        set_tooltip_text: Some("Приблизить (+)"),
-                        add_css_class: "flat",
-                        connect_clicked => EditorMsg::ZoomIn,
+                        set_margin_end: 12,
+                        set_margin_bottom: 12,
+                        append: model.list.widget(),
                     },
                 },
             },
@@ -157,25 +237,178 @@ impl SimpleComponent for Editor {
     }
 
     fn init(
-        player: Self::Init,
+        (player, library): Self::Init,
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         let waveform = Waveform::new();
-        let seek_sender = sender.input_sender().clone();
-        waveform.connect_seek(move |frame| seek_sender.emit(EditorMsg::Seek(frame)));
+        let s = sender.input_sender().clone();
+        waveform.connect_event(move |e| s.emit(EditorMsg::Wave(e)));
+        let list = MarkupList::new();
+        let s = sender.input_sender().clone();
+        list.connect_event(move |e| s.emit(EditorMsg::List(e)));
+        list.widget().set_hexpand(true);
 
         let model = Editor {
             player,
+            library,
             file: None,
             error: None,
+            histories: HashMap::new(),
+            selected: None,
+            selection: None,
+            looping: None,
+            color: 0,
             waveform,
+            list,
+            toasts: adw::ToastOverlay::new(),
         };
         let widgets = view_output!();
+        model.start_ticking(&widgets);
 
-        // Playhead, time and analysis progress are polled every frame instead of
-        // going through messages.
-        let (waveform, player) = (model.waveform.clone(), model.player.clone());
+        ComponentParts { model, widgets }
+    }
+
+    fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
+        let edited = match msg {
+            EditorMsg::Open(path) => {
+                self.open(path);
+                false
+            }
+            EditorMsg::TogglePlay => {
+                if let Some(p) = self.player()
+                    && self.file.is_some()
+                {
+                    let restart = self
+                        .looping
+                        .and_then(|id| self.markup()?.region(id))
+                        .map_or(0, |r| r.start);
+                    p.toggle(restart);
+                }
+                false
+            }
+            EditorMsg::ToStart => {
+                self.seek(0);
+                false
+            }
+            EditorMsg::Nudge(secs) => {
+                if let (Some(p), Some(f)) = (self.player(), &self.file) {
+                    let delta = secs * f64::from(f.info.sample_rate);
+                    let target = (p.position() as f64 + delta).max(0.0) as u64;
+                    self.seek(target.min(f.info.total_frames));
+                }
+                false
+            }
+            EditorMsg::ZoomIn => {
+                self.waveform.zoom(0.5);
+                false
+            }
+            EditorMsg::ZoomOut => {
+                self.waveform.zoom(2.0);
+                false
+            }
+            EditorMsg::ZoomFit => {
+                self.waveform.zoom_fit();
+                false
+            }
+            EditorMsg::Wave(e) => self.on_wave(e),
+            EditorMsg::List(e) => self.on_list(e),
+            EditorMsg::AddMarker => self.add_marker(),
+            EditorMsg::SetIn => self.set_edge(true),
+            EditorMsg::SetOut => self.set_edge(false),
+            EditorMsg::MakeRegion => self.make_region(),
+            EditorMsg::RenameSelected => {
+                if let Some(item) = self.selected {
+                    self.list.focus_name(item);
+                }
+                false
+            }
+            EditorMsg::SetColor(color) => {
+                self.color = color;
+                match self.selected {
+                    Some(item) => self.recolor(item, color),
+                    None => false,
+                }
+            }
+            EditorMsg::ToggleExport => match self.selected_region() {
+                Some(r) => {
+                    let export = !r.export;
+                    self.edit_region(r.id, |r| r.export = export)
+                }
+                None => false,
+            },
+            EditorMsg::ToggleLoop => {
+                self.toggle_loop();
+                false
+            }
+            EditorMsg::DeleteSelected => match self.selected {
+                Some(item) => self.delete(item),
+                None => false,
+            },
+            EditorMsg::Step(forward) => {
+                self.step(forward);
+                false
+            }
+            EditorMsg::Escape => {
+                self.selection = None;
+                self.selected = None;
+                self.waveform.set_selection(None);
+                self.sync_selection();
+                false
+            }
+            EditorMsg::Undo | EditorMsg::Redo => self.undo_redo(matches!(msg, EditorMsg::Redo)),
+            EditorMsg::SetReviewed(reviewed) => {
+                if let Some(f) = &mut self.file
+                    && f.record.reviewed != reviewed
+                {
+                    match self.library.set_reviewed(f.record.id, reviewed) {
+                        Ok(()) => {
+                            f.record.reviewed = reviewed;
+                            sender.output(EditorOutput::Changed(f.path.clone())).ok();
+                        }
+                        Err(err) => self.toast(&format!("Не удалось сохранить: {err:#}")),
+                    }
+                }
+                false
+            }
+        };
+
+        if edited {
+            self.sync_markup();
+            if let Some(f) = &self.file {
+                sender.output(EditorOutput::Changed(f.path.clone())).ok();
+            }
+        }
+    }
+}
+
+impl Editor {
+    fn player(&self) -> Option<&Player> {
+        self.player.as_deref()
+    }
+
+    fn markup(&self) -> Option<&Markup> {
+        self.file.as_ref().map(|f| &f.markup)
+    }
+
+    fn playhead(&self) -> u64 {
+        self.player().map_or(0, Player::position)
+    }
+
+    fn selected_region(&self) -> Option<&Region> {
+        match self.selected? {
+            Item::Region(id) => self.markup()?.region(id),
+            Item::Marker(_) => None,
+        }
+    }
+
+    fn toast(&self, text: &str) {
+        self.toasts.add_toast(adw::Toast::new(text));
+    }
+
+    /// Plays from the playhead and the clock / waveform follow on every frame.
+    fn start_ticking(&self, widgets: &EditorWidgets) {
+        let (waveform, player) = (self.waveform.clone(), self.player.clone());
         let (time_label, play_button, status_label) = (
             widgets.time_label.clone(),
             widgets.play_button.clone(),
@@ -189,8 +422,7 @@ impl SimpleComponent for Editor {
             let (pos, playing) = (player.position(), player.is_playing());
             waveform.update(pos, playing);
 
-            let progress = waveform.analysis_progress();
-            let status = match progress {
+            let status = match waveform.analysis_progress() {
                 Some(p) if p < 1.0 => format!("анализ волны {:.0}%", p * 100.0),
                 _ => String::new(),
             };
@@ -212,83 +444,438 @@ impl SimpleComponent for Editor {
             }
             gtk::glib::ControlFlow::Continue
         });
-
-        ComponentParts { model, widgets }
     }
 
-    fn update(&mut self, msg: Self::Input, _sender: ComponentSender<Self>) {
-        match msg {
-            EditorMsg::Open(path) => self.open(path),
-            EditorMsg::TogglePlay => {
-                if let Some(p) = &self.player
-                    && self.file.is_some()
-                {
-                    p.toggle(0);
-                }
-            }
-            EditorMsg::ToStart => self.seek(0),
-            EditorMsg::Nudge(secs) => {
-                if let (Some(p), Some(f)) = (&self.player, &self.file) {
-                    let delta = secs * f64::from(f.info.sample_rate);
-                    let target = (p.position() as f64 + delta).max(0.0) as u64;
-                    self.seek(target.min(f.info.total_frames));
-                }
-            }
-            EditorMsg::Seek(frame) => self.seek(frame),
-            EditorMsg::ZoomIn => self.waveform.zoom(0.5),
-            EditorMsg::ZoomOut => self.waveform.zoom(2.0),
-            EditorMsg::ZoomFit => self.waveform.zoom_fit(),
-        }
-    }
-}
-
-impl Editor {
     fn open(&mut self, path: PathBuf) {
         if self.file.as_ref().is_some_and(|f| f.path == path) {
             return;
         }
         self.file = None;
-        if let Some(p) = &self.player {
+        self.selected = None;
+        self.selection = None;
+        self.looping = None;
+        if let Some(p) = self.player() {
             p.unload();
         }
 
-        let info = match decode::probe(&path) {
-            Ok(info) => info,
-            Err(err) => {
-                self.error = Some(format!("{err:#}"));
-                return;
+        match self.load(&path) {
+            Ok(loaded) => {
+                self.error = None;
+                let job = &loaded._peaks;
+                self.waveform
+                    .set_file(job.peaks.clone(), loaded.info.sample_rate);
+                if let Some(p) = self.player() {
+                    p.load(path);
+                }
+                self.file = Some(loaded);
+                self.sync_markup();
+                self.waveform.focus();
             }
-        };
-        self.error = None;
-
-        let job = peaks::start(&path, usize::from(info.channels), info.total_frames);
-        let markers = info
-            .cues
-            .iter()
-            .map(|c| Marker {
-                frame: c.frame,
-                label: c.label.clone().unwrap_or_else(|| format!("#{}", c.id)),
-            })
-            .collect();
-        self.waveform
-            .set_file(job.peaks.clone(), info.sample_rate, markers);
-        if let Some(p) = &self.player {
-            p.load(path.clone());
+            Err(err) => self.error = Some(format!("{err:#}")),
         }
-        self.file = Some(Loaded {
+    }
+
+    fn load(&mut self, path: &std::path::Path) -> anyhow::Result<Loaded> {
+        let info = decode::probe(path)?;
+        let fingerprint = crate::audio::fingerprint(path)?;
+        let mut record = self.library.file(
+            fingerprint,
             path,
+            info.sample_rate,
+            info.channels,
+            info.total_frames,
+        )?;
+        let mut markup = self.library.markup(record.id)?;
+
+        // Recorder marks become ordinary markers once; after that they are ours to edit.
+        if !record.cues_imported {
+            let imported = info
+                .cues
+                .iter()
+                .map(|c| {
+                    Change::add_marker(Marker {
+                        id: 0,
+                        file: record.id,
+                        pos: c.frame,
+                        name: c.label.clone().unwrap_or_default(),
+                        color: RECORDER_MARK_COLOR,
+                        from_recorder: true,
+                    })
+                })
+                .collect();
+            History::default().apply(&mut markup, &*self.library, imported)?;
+            self.library.set_cues_imported(record.id)?;
+            record.cues_imported = true;
+        }
+
+        let job = peaks::start(path, usize::from(info.channels), info.total_frames);
+        Ok(Loaded {
+            path: path.to_path_buf(),
             info,
+            record,
+            markup,
             _peaks: job,
-        });
+        })
     }
 
     fn seek(&self, frame: u64) {
-        if let Some(p) = &self.player
+        if let Some(p) = self.player()
             && self.file.is_some()
         {
             p.seek(frame);
             self.waveform.reveal(frame);
         }
+    }
+
+    /// Applies one user action. Returns whether anything changed.
+    fn commit(&mut self, changes: Vec<Change>) -> bool {
+        let Some(f) = &mut self.file else {
+            return false;
+        };
+        if changes.is_empty() {
+            return false;
+        }
+        let history = self.histories.entry(f.record.id).or_default();
+        match history.apply(&mut f.markup, &*self.library, changes) {
+            Ok(applied) => {
+                // Select what was just created.
+                match applied.last() {
+                    Some(Change::Marker {
+                        before: None,
+                        after: Some(m),
+                    }) => self.selected = Some(Item::Marker(m.id)),
+                    Some(Change::Region {
+                        before: None,
+                        after: Some(r),
+                    }) => self.selected = Some(Item::Region(r.id)),
+                    _ => {}
+                }
+                true
+            }
+            Err(err) => {
+                self.toast(&format!("Не удалось сохранить: {err:#}"));
+                false
+            }
+        }
+    }
+
+    fn edit_marker(&mut self, id: Id, f: impl FnOnce(&mut Marker)) -> bool {
+        let Some(before) = self.markup().and_then(|m| m.marker(id)).cloned() else {
+            return false;
+        };
+        let mut after = before.clone();
+        f(&mut after);
+        if after == before {
+            return false;
+        }
+        self.commit(vec![Change::Marker {
+            before: Some(before),
+            after: Some(after),
+        }])
+    }
+
+    fn edit_region(&mut self, id: Id, f: impl FnOnce(&mut Region)) -> bool {
+        let Some(before) = self.markup().and_then(|m| m.region(id)).cloned() else {
+            return false;
+        };
+        let mut after = before.clone();
+        f(&mut after);
+        if after == before {
+            return false;
+        }
+        let changed = self.commit(vec![Change::Region {
+            before: Some(before),
+            after: Some(after.clone()),
+        }]);
+        if changed && self.looping == Some(id) {
+            self.loop_region(&after);
+        }
+        changed
+    }
+
+    fn on_wave(&mut self, e: WaveEvent) -> bool {
+        match e {
+            WaveEvent::Seek(frame) => {
+                if let Some(p) = self.player() {
+                    p.seek(frame);
+                }
+                false
+            }
+            WaveEvent::Select(item) => {
+                self.selected = item;
+                self.sync_selection();
+                false
+            }
+            WaveEvent::Selection(sel) => {
+                self.selection = sel;
+                false
+            }
+            WaveEvent::MarkerMoved { id, pos } => self.edit_marker(id, |m| m.pos = pos),
+            WaveEvent::RegionChanged { id, start, end } => self.edit_region(id, |r| {
+                r.start = start;
+                r.end = end;
+            }),
+            WaveEvent::Activate(item) => {
+                self.selected = Some(item);
+                self.sync_selection();
+                self.list.focus_name(item);
+                false
+            }
+        }
+    }
+
+    fn on_list(&mut self, e: ListEvent) -> bool {
+        match e {
+            ListEvent::Select(item) => {
+                self.selected = Some(item);
+                let pos = match item {
+                    Item::Marker(id) => self.markup().and_then(|m| m.marker(id)).map(|m| m.pos),
+                    Item::Region(id) => self.markup().and_then(|m| m.region(id)).map(|r| r.start),
+                };
+                if let Some(pos) = pos {
+                    self.seek(pos);
+                }
+                self.sync_selection();
+                false
+            }
+            ListEvent::Rename(item, name) => match item {
+                Item::Marker(id) => self.edit_marker(id, |m| m.name = name),
+                Item::Region(id) => self.edit_region(id, |r| r.name = name),
+            },
+            ListEvent::Color(item, color) => {
+                self.color = color;
+                self.recolor(item, color)
+            }
+            ListEvent::Export(id, export) => self.edit_region(id, |r| r.export = export),
+            ListEvent::Channels(id, mode) => self.edit_region(id, |r| r.channels = mode),
+            ListEvent::Delete(item) => self.delete(item),
+            ListEvent::Done => {
+                self.waveform.focus();
+                false
+            }
+        }
+    }
+
+    fn recolor(&mut self, item: Item, color: ColorIdx) -> bool {
+        match item {
+            Item::Marker(id) => self.edit_marker(id, |m| m.color = color),
+            Item::Region(id) => self.edit_region(id, |r| r.color = color),
+        }
+    }
+
+    fn add_marker(&mut self) -> bool {
+        let Some(f) = &self.file else { return false };
+        let marker = Marker {
+            id: 0,
+            file: f.record.id,
+            pos: self.playhead(),
+            name: String::new(),
+            color: self.color,
+            from_recorder: false,
+        };
+        self.commit(vec![Change::add_marker(marker)])
+    }
+
+    /// I / O: trims the selected region, or sets the edges of the temporary selection.
+    fn set_edge(&mut self, start: bool) -> bool {
+        let at = self.playhead();
+        if let Some(r) = self.selected_region().cloned() {
+            return self.edit_region(r.id, |r| {
+                if start {
+                    r.start = at.min(r.end.saturating_sub(1));
+                } else {
+                    r.end = at.max(r.start + 1);
+                }
+            });
+        }
+        let (a, b) = self.selection.unwrap_or((at, at));
+        self.selection = Some(if start {
+            (at, b.max(at))
+        } else {
+            (a.min(at), at)
+        });
+        self.waveform.set_selection(self.selection);
+        false
+    }
+
+    fn make_region(&mut self) -> bool {
+        let Some(f) = &self.file else { return false };
+        let Some((start, end)) = self.selection.filter(|(a, b)| b > a) else {
+            self.toast("Сначала выделите участок мышью или клавишами I и O");
+            return false;
+        };
+        let region = Region {
+            id: 0,
+            file: f.record.id,
+            start,
+            end,
+            name: String::new(),
+            color: self.color,
+            export: true,
+            channels: ChannelMode::AsSource,
+        };
+        let created = self.commit(vec![Change::add_region(region)]);
+        if created {
+            self.selection = None;
+            self.waveform.set_selection(None);
+            // Name it right away: that is what the region is for.
+            self.sync_markup();
+            if let Some(item) = self.selected {
+                self.list.focus_name(item);
+            }
+        }
+        created
+    }
+
+    fn delete(&mut self, item: Item) -> bool {
+        let change = match item {
+            Item::Marker(id) => self
+                .markup()
+                .and_then(|m| m.marker(id))
+                .map(|m| Change::Marker {
+                    before: Some(m.clone()),
+                    after: None,
+                }),
+            Item::Region(id) => self
+                .markup()
+                .and_then(|m| m.region(id))
+                .map(|r| Change::Region {
+                    before: Some(r.clone()),
+                    after: None,
+                }),
+        };
+        let Some(change) = change else { return false };
+        if Some(item) == self.looping.map(Item::Region) {
+            self.stop_loop();
+        }
+        if self.selected == Some(item) {
+            self.selected = None;
+        }
+        self.commit(vec![change])
+    }
+
+    fn step(&mut self, forward: bool) {
+        let Some(markup) = self.markup() else { return };
+        let mut items: Vec<(u64, Item)> = markup
+            .markers
+            .iter()
+            .map(|m| (m.pos, Item::Marker(m.id)))
+            .chain(markup.regions.iter().map(|r| (r.start, Item::Region(r.id))))
+            .collect();
+        items.sort_by_key(|(pos, item)| (*pos, matches!(item, Item::Region(_))));
+        if items.is_empty() {
+            return;
+        }
+
+        let current = self
+            .selected
+            .and_then(|sel| items.iter().position(|(_, i)| *i == sel));
+        let next = match (current, forward) {
+            (Some(i), true) => (i + 1).min(items.len() - 1),
+            (Some(i), false) => i.saturating_sub(1),
+            (None, true) => {
+                let at = self.playhead();
+                items
+                    .iter()
+                    .position(|(p, _)| *p > at)
+                    .unwrap_or(items.len() - 1)
+            }
+            (None, false) => {
+                let at = self.playhead();
+                items.iter().rposition(|(p, _)| *p < at).unwrap_or(0)
+            }
+        };
+        let (pos, item) = items[next];
+        self.selected = Some(item);
+        self.seek(pos);
+        self.sync_selection();
+    }
+
+    fn toggle_loop(&mut self) {
+        if self.looping.is_some() {
+            self.stop_loop();
+            return;
+        }
+        if let Some(r) = self.selected_region().cloned() {
+            self.looping = Some(r.id);
+            self.loop_region(&r);
+            if let Some(p) = self.player() {
+                p.seek(r.start);
+                p.play();
+            }
+            self.waveform.set_looping(self.looping);
+        } else {
+            self.toast("Выберите регион, чтобы зациклить его");
+        }
+    }
+
+    fn loop_region(&self, r: &Region) {
+        if let Some(p) = self.player() {
+            p.set_range(r.start, Some(r.end), true);
+        }
+    }
+
+    fn stop_loop(&mut self) {
+        self.looping = None;
+        if let Some(p) = self.player() {
+            p.set_range(0, None, false);
+            p.pause();
+        }
+        self.waveform.set_looping(None);
+    }
+
+    fn undo_redo(&mut self, redo: bool) -> bool {
+        let Some(f) = &mut self.file else {
+            return false;
+        };
+        let history = self.histories.entry(f.record.id).or_default();
+        let result = if redo {
+            history.redo(&mut f.markup, &*self.library)
+        } else {
+            history.undo(&mut f.markup, &*self.library)
+        };
+        match result {
+            Ok(changed) => {
+                // The selection may point at something that no longer exists.
+                let markup = &f.markup;
+                let exists = |item: &Item| match *item {
+                    Item::Marker(id) => markup.marker(id).is_some(),
+                    Item::Region(id) => markup.region(id).is_some(),
+                };
+                if !self.selected.as_ref().is_some_and(exists) {
+                    self.selected = None;
+                }
+                if !self.looping.map(Item::Region).as_ref().is_some_and(exists)
+                    && self.looping.is_some()
+                {
+                    self.stop_loop();
+                }
+                changed
+            }
+            Err(err) => {
+                self.toast(&format!("Не удалось отменить: {err:#}"));
+                false
+            }
+        }
+    }
+
+    /// Markup changed: redraw the waveform and rebuild the list.
+    fn sync_markup(&self) {
+        let Some(f) = &self.file else { return };
+        self.waveform.set_markup(&f.markup, self.selected);
+        self.list.set(
+            &f.markup,
+            self.selected,
+            f.info.sample_rate,
+            f.info.channels,
+        );
+    }
+
+    /// Only the selection changed: cheaper, and keeps list entries alive while typing.
+    fn sync_selection(&self) {
+        let Some(f) = &self.file else { return };
+        self.waveform.set_markup(&f.markup, self.selected);
+        self.list.set_selected(self.selected);
     }
 
     fn file_name(&self) -> String {
@@ -324,9 +911,20 @@ impl Editor {
                 format_time(start % 86_400.0, false)
             ));
         }
-        if !i.cues.is_empty() {
-            parts.push(format!("меток: {}", i.cues.len()));
-        }
         parts.join(" · ")
+    }
+
+    fn selection_label(&self) -> String {
+        let (Some((a, b)), Some(f)) = (self.selection, &self.file) else {
+            return String::new();
+        };
+        if b <= a {
+            return String::new();
+        }
+        let rate = f64::from(f.info.sample_rate);
+        format!(
+            "выделено {:.2} с — R: создать регион",
+            (b - a) as f64 / rate
+        )
     }
 }

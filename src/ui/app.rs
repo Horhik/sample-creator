@@ -7,9 +7,10 @@ use relm4::{
     Component, ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent,
 };
 
-use super::editor::{Editor, EditorMsg};
+use super::editor::{Editor, EditorMsg, EditorOutput};
 use super::file_tree::{FileTree, FileTreeInput, FileTreeOutput};
 use crate::audio::player::Player;
+use crate::store::Library;
 
 pub struct App {
     window: adw::ApplicationWindow,
@@ -23,6 +24,7 @@ pub enum AppMsg {
     ChooseRoot,
     SetRoot(PathBuf),
     FileSelected(PathBuf),
+    FileChanged(PathBuf),
 }
 
 #[relm4::component(pub)]
@@ -118,7 +120,16 @@ impl SimpleComponent for App {
                 None
             }
         };
-        let editor = Editor::builder().launch(player).detach();
+        let library = Library::open_default().unwrap_or_else(|err| {
+            // Still usable for listening; markup just won't outlive the session.
+            eprintln!("cannot open the markup library, keeping it in memory: {err:#}");
+            Library::open_in_memory().expect("in-memory SQLite")
+        });
+        let editor = Editor::builder()
+            .launch((player, Rc::new(library)))
+            .forward(sender.input_sender(), |out| match out {
+                EditorOutput::Changed(path) => AppMsg::FileChanged(path),
+            });
 
         let model = App {
             window: window.clone(),
@@ -128,7 +139,7 @@ impl SimpleComponent for App {
         };
         let widgets = view_output!();
 
-        window.add_controller(transport_keys(&window, model.editor.sender().clone()));
+        window.add_controller(editor_keys(&window, model.editor.sender().clone()));
         if let Some(path) = open_file {
             model.editor.emit(EditorMsg::Open(path));
         }
@@ -154,6 +165,7 @@ impl SimpleComponent for App {
                 self.file_tree.emit(FileTreeInput::SetRoot(dir));
             }
             AppMsg::FileSelected(path) => self.editor.emit(EditorMsg::Open(path)),
+            AppMsg::FileChanged(_path) => {}
         }
     }
 }
@@ -164,32 +176,56 @@ fn dir_title(dir: &std::path::Path) -> String {
         .unwrap_or_else(|| dir.to_string_lossy().into_owned())
 }
 
-/// Window-wide transport keys. Captured before the focused widget sees them, except
+/// Window-wide editor keys. Captured before the focused widget sees them, except
 /// while typing into a text field.
-fn transport_keys(
+fn editor_keys(
     window: &adw::ApplicationWindow,
     editor: relm4::Sender<EditorMsg>,
 ) -> gtk::EventControllerKey {
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     let window = window.clone();
-    keys.connect_key_pressed(move |_, key, _, mods| {
+    keys.connect_key_pressed(move |_, key, keycode, mods| {
+        // Letters by physical key, so M/I/O/R work with a Cyrillic layout too.
+        let key = gtk::prelude::WidgetExt::display(&window)
+            .translate_key(keycode, mods, 0)
+            .map_or(key, |(k, ..)| k);
         let typing =
             gtk::prelude::GtkWindowExt::focus(&window).is_some_and(|w| w.is::<gtk::Text>());
-        if typing || mods.intersects(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::ALT_MASK)
-        {
+        if typing || mods.contains(gdk::ModifierType::ALT_MASK) {
             return glib::Propagation::Proceed;
         }
-        let big = mods.contains(gdk::ModifierType::SHIFT_MASK);
-        let msg = match key {
-            gdk::Key::space => EditorMsg::TogglePlay,
-            gdk::Key::Home => EditorMsg::ToStart,
-            gdk::Key::Left => EditorMsg::Nudge(if big { -10.0 } else { -1.0 }),
-            gdk::Key::Right => EditorMsg::Nudge(if big { 10.0 } else { 1.0 }),
-            gdk::Key::plus | gdk::Key::equal | gdk::Key::KP_Add => EditorMsg::ZoomIn,
-            gdk::Key::minus | gdk::Key::KP_Subtract => EditorMsg::ZoomOut,
-            gdk::Key::_0 | gdk::Key::KP_0 => EditorMsg::ZoomFit,
-            _ => return glib::Propagation::Proceed,
+        let ctrl = mods.contains(gdk::ModifierType::CONTROL_MASK);
+        let shift = mods.contains(gdk::ModifierType::SHIFT_MASK);
+        let msg = match (ctrl, key.to_lower()) {
+            (true, gdk::Key::z) if shift => EditorMsg::Redo,
+            (true, gdk::Key::z) => EditorMsg::Undo,
+            (true, gdk::Key::y) => EditorMsg::Redo,
+            (true, _) => return glib::Propagation::Proceed,
+
+            (_, gdk::Key::space) => EditorMsg::TogglePlay,
+            (_, gdk::Key::Home) => EditorMsg::ToStart,
+            (_, gdk::Key::Left) => EditorMsg::Nudge(if shift { -10.0 } else { -1.0 }),
+            (_, gdk::Key::Right) => EditorMsg::Nudge(if shift { 10.0 } else { 1.0 }),
+            (_, gdk::Key::plus | gdk::Key::equal | gdk::Key::KP_Add) => EditorMsg::ZoomIn,
+            (_, gdk::Key::minus | gdk::Key::KP_Subtract) => EditorMsg::ZoomOut,
+            (_, gdk::Key::_0 | gdk::Key::KP_0) => EditorMsg::ZoomFit,
+
+            (_, gdk::Key::m) => EditorMsg::AddMarker,
+            (_, gdk::Key::i) => EditorMsg::SetIn,
+            (_, gdk::Key::o) => EditorMsg::SetOut,
+            (_, gdk::Key::r) => EditorMsg::MakeRegion,
+            (_, gdk::Key::e) => EditorMsg::ToggleExport,
+            (_, gdk::Key::l) => EditorMsg::ToggleLoop,
+            (_, gdk::Key::Return | gdk::Key::KP_Enter | gdk::Key::F2) => EditorMsg::RenameSelected,
+            (_, gdk::Key::Delete | gdk::Key::BackSpace) => EditorMsg::DeleteSelected,
+            (_, gdk::Key::Tab) => EditorMsg::Step(true),
+            (_, gdk::Key::ISO_Left_Tab) => EditorMsg::Step(false),
+            (_, gdk::Key::Escape) => EditorMsg::Escape,
+            (_, k) => match k.to_unicode().and_then(|c| c.to_digit(10)) {
+                Some(d @ 1..=8) => EditorMsg::SetColor(d as u8 - 1),
+                _ => return glib::Propagation::Proceed,
+            },
         };
         editor.emit(msg);
         glib::Propagation::Stop
