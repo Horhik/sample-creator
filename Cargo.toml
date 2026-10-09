@@ -1,0 +1,12 @@
+[package]
+name = "sample-creator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+cpal = "0.18.2"
+crossbeam-channel = "0.5.17"
+relm4 = { version = "0.11.0", features = ["libadwaita", "gnome_48"] }
+symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "flac"] }
+xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
