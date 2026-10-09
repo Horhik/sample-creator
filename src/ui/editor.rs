@@ -41,9 +41,11 @@ pub struct Editor {
     selected: Option<Item>,
     /// Range picked with the mouse or I/O, not yet a region.
     selection: Option<(u64, u64)>,
-    looping: Option<Id>,
-    /// The temporary selection is playing in a loop.
-    loop_selection: bool,
+    /// Playback loops over the selection, or else the selected region. On by
+    /// default so a picked range never runs away while you listen; L toggles it.
+    auto_loop: bool,
+    /// Loop range last sent to the player, to avoid resending it on every message.
+    applied_loop: std::cell::Cell<Option<(u64, u64)>>,
     /// Colour for the next new region or marker. Advances after each region so
     /// neighbouring regions differ; picking a colour with nothing selected sets it.
     color: ColorIdx,
@@ -267,8 +269,8 @@ impl SimpleComponent for Editor {
             histories: HashMap::new(),
             selected: None,
             selection: None,
-            looping: None,
-            loop_selection: false,
+            auto_loop: true,
+            applied_loop: Default::default(),
             color: 0,
             context_frame: Rc::default(),
             waveform,
@@ -292,13 +294,7 @@ impl SimpleComponent for Editor {
                 if let Some(p) = self.player()
                     && self.file.is_some()
                 {
-                    let restart = match (self.looping, self.selection) {
-                        (Some(id), _) => self.markup().and_then(|m| m.region(id)).map(|r| r.start),
-                        (None, Some((a, _))) if self.loop_selection => Some(a),
-                        _ => None,
-                    };
-                    let restart = restart.unwrap_or(0);
-                    p.toggle(restart);
+                    p.toggle(self.loop_range().map_or(0, |(a, _)| a));
                 }
                 false
             }
@@ -388,6 +384,7 @@ impl SimpleComponent for Editor {
             }
         };
 
+        self.apply_loop();
         if edited {
             self.sync_markup();
             if let Some(f) = &self.file {
@@ -468,8 +465,7 @@ impl Editor {
         self.file = None;
         self.selected = None;
         self.selection = None;
-        self.looping = None;
-        self.loop_selection = false;
+        self.applied_loop.set(None);
         if let Some(p) = self.player() {
             p.unload();
         }
@@ -599,14 +595,10 @@ impl Editor {
         if after == before {
             return false;
         }
-        let changed = self.commit(vec![Change::Region {
+        self.commit(vec![Change::Region {
             before: Some(before),
-            after: Some(after.clone()),
-        }]);
-        if changed && self.looping == Some(id) {
-            self.loop_region(&after);
-        }
-        changed
+            after: Some(after),
+        }])
     }
 
     fn on_wave(&mut self, e: WaveEvent, sender: &ComponentSender<Self>) -> bool {
@@ -660,7 +652,7 @@ impl Editor {
             marker_selected: matches!(self.selected, Some(Item::Marker(_))),
             region_selected: region.is_some(),
             region_exported: region.is_some_and(|r| r.export),
-            looping: self.looping.is_some() || self.loop_selection,
+            auto_loop: self.auto_loop,
             can_undo: history.is_some_and(History::can_undo),
             can_redo: history.is_some_and(History::can_redo),
         };
@@ -767,16 +759,6 @@ impl Editor {
     fn set_selection(&mut self, selection: Option<(u64, u64)>) {
         self.selection = selection;
         self.waveform.set_selection(selection);
-        if self.loop_selection {
-            match selection.filter(|(a, b)| b > a) {
-                Some((a, b)) => {
-                    if let Some(p) = self.player() {
-                        p.set_range(a, Some(b), true);
-                    }
-                }
-                None => self.stop_loop(),
-            }
-        }
     }
 
     fn make_region(&mut self) -> bool {
@@ -795,18 +777,11 @@ impl Editor {
             export: true,
             channels: ChannelMode::AsSource,
         };
-        let was_looping = self.loop_selection;
         let created = self.commit(vec![Change::add_region(region)]);
         if created {
             self.color = (self.color + 1) % PALETTE.len() as ColorIdx;
-            self.loop_selection = false;
+            // The new region is selected, so the loop carries over to it.
             self.set_selection(None);
-            // Keep listening: the loop moves from the selection to the new region.
-            if was_looping && let Some(r) = self.selected_region().cloned() {
-                self.looping = Some(r.id);
-                self.loop_region(&r);
-                self.waveform.set_looping(self.looping);
-            }
             // Name it right away: that is what the region is for.
             self.sync_markup();
             if let Some(item) = self.selected {
@@ -834,9 +809,6 @@ impl Editor {
                 }),
         };
         let Some(change) = change else { return false };
-        if Some(item) == self.looping.map(Item::Region) {
-            self.stop_loop();
-        }
         if self.selected == Some(item) {
             self.selected = None;
         }
@@ -880,43 +852,45 @@ impl Editor {
         self.sync_selection();
     }
 
-    fn toggle_loop(&mut self) {
-        if self.looping.is_some() || self.loop_selection {
-            self.stop_loop();
+    /// What playback is confined to right now, if anything.
+    fn loop_range(&self) -> Option<(u64, u64)> {
+        if !self.auto_loop {
+            return None;
+        }
+        self.selection
+            .filter(|(a, b)| b > a)
+            .or_else(|| self.selected_region().map(|r| (r.start, r.end)))
+    }
+
+    /// Sends the loop range to the player when it changed. Called after every
+    /// message, so selection, region edits, undo and deletes all stay in sync.
+    fn apply_loop(&self) {
+        let range = self.loop_range();
+        if range == self.applied_loop.get() {
             return;
         }
-        let range = if let Some((a, b)) = self.selection.filter(|(a, b)| b > a) {
-            self.loop_selection = true;
-            (a, b)
-        } else if let Some(r) = self.selected_region().cloned() {
-            self.looping = Some(r.id);
-            self.waveform.set_looping(self.looping);
-            (r.start, r.end)
-        } else {
-            self.toast("Выделите участок или выберите регион, чтобы зациклить");
-            return;
+        self.applied_loop.set(range);
+        if let Some(p) = self.player() {
+            match range {
+                Some((a, b)) => p.set_range(a, Some(b), true),
+                None => p.set_range(0, None, false),
+            }
+        }
+        // Mark the region on the waveform only when it, not a selection, is looping.
+        let looping_region = match (range, self.selection) {
+            (Some(_), None) => self.selected_region().map(|r| r.id),
+            _ => None,
         };
-        if let Some(p) = self.player() {
-            p.set_range(range.0, Some(range.1), true);
-            p.seek(range.0);
-            p.play();
-        }
+        self.waveform.set_looping(looping_region);
     }
 
-    fn loop_region(&self, r: &Region) {
-        if let Some(p) = self.player() {
-            p.set_range(r.start, Some(r.end), true);
-        }
-    }
-
-    fn stop_loop(&mut self) {
-        self.looping = None;
-        self.loop_selection = false;
-        if let Some(p) = self.player() {
-            p.set_range(0, None, false);
-            p.pause();
-        }
-        self.waveform.set_looping(None);
+    fn toggle_loop(&mut self) {
+        self.auto_loop = !self.auto_loop;
+        self.toast(if self.auto_loop {
+            "Цикл включён: выделение и выбранный регион повторяются"
+        } else {
+            "Цикл выключен: воспроизведение идёт дальше"
+        });
     }
 
     fn undo_redo(&mut self, redo: bool) -> bool {
@@ -939,11 +913,6 @@ impl Editor {
                 };
                 if !self.selected.as_ref().is_some_and(exists) {
                     self.selected = None;
-                }
-                if !self.looping.map(Item::Region).as_ref().is_some_and(exists)
-                    && self.looping.is_some()
-                {
-                    self.stop_loop();
                 }
                 changed
             }

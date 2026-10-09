@@ -15,7 +15,7 @@ pub struct Context {
     pub marker_selected: bool,
     pub region_selected: bool,
     pub region_exported: bool,
-    pub looping: bool,
+    pub auto_loop: bool,
     pub can_undo: bool,
     pub can_redo: bool,
 }
@@ -39,16 +39,12 @@ pub fn show(
 
     let play = gio::Menu::new();
     entry(&play, "Воспроизвести / пауза", "play", Some("space"));
-    if ctx.looping {
-        entry(&play, "Выключить цикл", "loop", Some("l"));
-    } else if ctx.has_selection || ctx.region_selected {
-        let what = if ctx.has_selection {
-            "выделение"
-        } else {
-            "регион"
-        };
-        entry(&play, &format!("Зациклить {what}"), "loop", Some("l"));
-    }
+    let label = if ctx.auto_loop {
+        "Не зацикливать выделение"
+    } else {
+        "Зацикливать выделение"
+    };
+    entry(&play, label, "loop", Some("l"));
     menu.append_section(None, &play);
 
     let create = gio::Menu::new();
