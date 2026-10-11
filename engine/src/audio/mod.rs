@@ -70,7 +70,7 @@ mod tests {
     #[test]
     fn matches_extensions_case_insensitively() {
         assert!(is_supported("261008_0065.wav"));
-        assert!(is_supported("/media/DR-40XP/MUSIC/TAKE.WAV"));
+        assert!(is_supported("/media/RECORDER/MUSIC/TAKE.WAV"));
         assert!(is_supported("take.Flac"));
         assert!(!is_supported("notes.txt"));
         assert!(!is_supported("wav"));

@@ -283,7 +283,7 @@ fn save_cache(cache: &Path, peaks: &Peaks) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::bwf::tests::tascam_like;
+    use crate::audio::bwf::tests::recorder_like;
 
     #[test]
     fn summarises_and_round_trips_through_cache() {
@@ -298,7 +298,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sc-peaks-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let wav = dir.join("take.wav");
-        fs::write(&wav, tascam_like(&frames)).unwrap();
+        fs::write(&wav, recorder_like(&frames)).unwrap();
         let cache = dir.join("take.peaks");
 
         let peaks = Peaks::new(2, 40000);

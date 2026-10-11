@@ -356,7 +356,7 @@ impl FrameSource for SymphoniaSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::bwf::tests::tascam_like;
+    use crate::audio::bwf::tests::recorder_like;
 
     #[test]
     fn wav_reads_and_seeks_exact_frames() {
@@ -364,7 +364,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sc-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("take.wav");
-        std::fs::write(&path, tascam_like(&frames)).unwrap();
+        std::fs::write(&path, recorder_like(&frames)).unwrap();
 
         let (info, mut src) = open(&path).unwrap();
         assert_eq!((info.channels, info.total_frames), (2, 10));

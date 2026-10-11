@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Sample Creator
-Comment=Разметка записей с диктофона и нарезка сэмплов
+Comment=Разметка аудиозаписей и нарезка сэмплов
 Exec=sample-creator %f
 Icon=io.github.horhik.SampleCreator
 Terminal=false

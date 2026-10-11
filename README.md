@@ -5,11 +5,11 @@
 <h1 align="center">Sample Creator</h1>
 
 <p align="center">
-  Разметка длинных записей с диктофона и нарезка из них сэмплов.<br>
+  Разметка аудиозаписей и нарезка из них сэмплов.<br>
   Linux (GTK4 / libadwaita) и Android.
 </p>
 
-<p align="center"><i>Mark up long field recordings and cut them into samples. Linux and Android. UI in Russian.</i></p>
+<p align="center"><i>Mark up audio recordings and cut them into samples. Linux and Android. UI in Russian.</i></p>
 
 ---
 
@@ -19,7 +19,7 @@
 и рядом с ними ничего не пишется — удобно, когда они лежат прямо на карте
 рекордера.
 
-Сделано для Tascam DR-40XP, но работает с любыми WAV/BWF (16/24/32 int, 32 float),
+Для разбора большого количества аудиофайлов: WAV/BWF (16/24/32 int, 32 float),
 MP3 и FLAC. Записи на несколько часов — норма: всё читается потоково.
 
 <p align="center">

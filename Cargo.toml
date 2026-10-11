@@ -2,7 +2,7 @@
 name = "sample-creator"
 version = "0.1.0"
 edition = "2024"
-description = "Mark up long field recordings and cut them into samples (GTK4)"
+description = "Mark up audio recordings and cut them into samples (GTK4)"
 license = "MIT"
 repository = "https://github.com/Horhik/sample-creator"
 

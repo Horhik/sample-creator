@@ -394,7 +394,7 @@ fn output_bext(path: &Path, info: &decode::AudioInfo, region: &Region) -> Bext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::bwf::{self, tests::tascam_like};
+    use crate::audio::bwf::{self, tests::recorder_like};
 
     fn region(name: &str, start: u64, end: u64, channels: ChannelMode) -> Region {
         Region {
@@ -473,7 +473,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let src = dir.join("take.wav");
         let frames: Vec<[f32; 2]> = (0..100).map(|i| [i as f32 / 100.0, -1.5]).collect();
-        std::fs::write(&src, tascam_like(&frames)).unwrap();
+        std::fs::write(&src, recorder_like(&frames)).unwrap();
         let out = dir.join("out");
         std::fs::create_dir_all(&out).unwrap();
 
@@ -538,7 +538,7 @@ mod tests {
         let src = dir.join("take.wav");
         // Left channel counts frames so the splice order is visible.
         let frames: Vec<[f32; 2]> = (0..4800).map(|i| [i as f32 / 8192.0, 0.0]).collect();
-        std::fs::write(&src, tascam_like(&frames)).unwrap();
+        std::fs::write(&src, recorder_like(&frames)).unwrap();
         let out = dir.join("out");
         std::fs::create_dir_all(&out).unwrap();
 
@@ -576,7 +576,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sc-speed-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let src = dir.join("take.wav");
-        std::fs::write(&src, tascam_like(&[[0.25, -0.25]; 4800])).unwrap();
+        std::fs::write(&src, recorder_like(&[[0.25, -0.25]; 4800])).unwrap();
         let out = dir.join("out");
         std::fs::create_dir_all(&out).unwrap();
 
@@ -618,7 +618,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sc-cancel-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let src = dir.join("take.wav");
-        std::fs::write(&src, tascam_like(&[[0.0, 0.0]; 50])).unwrap();
+        std::fs::write(&src, recorder_like(&[[0.0, 0.0]; 50])).unwrap();
         let regions = vec![(
             source(src.to_str().unwrap(), "take", 2),
             region("x", 0, 50, ChannelMode::AsSource),

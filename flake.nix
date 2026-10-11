@@ -1,5 +1,5 @@
 {
-  description = "sample-creator: mark up recorder takes and cut them into samples";
+  description = "sample-creator: mark up audio recordings and cut them into samples";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
@@ -72,7 +72,7 @@
           nativeBuildInputs = nativeDeps pkgs;
           buildInputs = libDeps pkgs;
           meta = {
-            description = "Mark up long field recordings and cut them into samples";
+            description = "Mark up audio recordings and cut them into samples";
             homepage = "https://github.com/Horhik/sample-creator";
             license = pkgs.lib.licenses.mit;
             mainProgram = "sample-creator";

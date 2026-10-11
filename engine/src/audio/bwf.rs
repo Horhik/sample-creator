@@ -3,7 +3,7 @@
 //! Reads only chunk headers and the small metadata chunks we care about (`fmt `,
 //! `bext`, `cue `, `LIST/adtl`); the `data` chunk is skipped with a seek, so this
 //! is cheap even for multi-gigabyte files on a slow card reader. Chunk order is not
-//! assumed: the Tascam DR-40XP writes `bext`, `cue `, `LIST`, `JUNK` before `fmt `.
+//! assumed: some recorders write `bext`, `cue `, `LIST`, `JUNK` before `fmt `.
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
@@ -316,10 +316,10 @@ pub(crate) mod tests {
         out
     }
 
-    /// A small stereo 32-bit float WAV laid out like the DR-40XP writes it.
-    pub(crate) fn tascam_like(frames: &[[f32; 2]]) -> Vec<u8> {
+    /// A small stereo 32-bit float WAV laid out like a hand-held recorder writes it.
+    pub(crate) fn recorder_like(frames: &[[f32; 2]]) -> Vec<u8> {
         let mut bext = vec![0u8; 602];
-        bext[256..256 + 26].copy_from_slice(b"TASCAM PCM Recoder DR-40XP");
+        bext[256..256 + 12].copy_from_slice(b"PCM Recorder");
         bext[320..330].copy_from_slice(b"2026-10-08");
         bext[330..338].copy_from_slice(b"22:47:55");
         bext[338..342].copy_from_slice(&3938686848u32.to_le_bytes());
@@ -360,8 +360,8 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn reads_tascam_layout() {
-        let bytes = tascam_like(&[[0.0, 0.0]; 5]);
+    fn reads_recorder_layout() {
+        let bytes = recorder_like(&[[0.0, 0.0]; 5]);
         let info = read_info(&mut Cursor::new(bytes)).unwrap();
 
         assert_eq!(info.format, SampleFormat::Float(32));
@@ -372,7 +372,7 @@ pub(crate) mod tests {
         assert_eq!(info.total_frames(), 5);
 
         let bext = info.bext.unwrap();
-        assert_eq!(bext.originator, "TASCAM PCM Recoder DR-40XP");
+        assert_eq!(bext.originator, "PCM Recorder");
         assert_eq!(bext.origination_date, "2026-10-08");
         assert_eq!(bext.origination_time, "22:47:55");
         assert_eq!(bext.time_reference, 3938686848);
