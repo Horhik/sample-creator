@@ -4,21 +4,28 @@ use std::rc::Rc;
 use relm4::adw::{self, prelude::*};
 use relm4::gtk::{self, gdk, gio, glib};
 use relm4::{
-    Component, ComponentController, ComponentParts, ComponentSender, Controller, SimpleComponent,
+    Component, ComponentController, ComponentParts, ComponentSender, Controller, RelmWidgetExt,
+    SimpleComponent,
 };
 
 use super::editor::{Editor, EditorMsg, EditorOutput};
 use super::file_tree::{FileTree, FileTreeInput, FileTreeOutput};
+use super::processing::{Processing, ProcessingMsg};
 use super::review::{Review, ReviewMsg, ReviewOutput};
 use crate::audio::player::Player;
 use crate::core::{Id, Item};
 use crate::store::Library;
+use crate::sync;
 
 pub struct App {
     window: adw::ApplicationWindow,
+    library: Rc<Library>,
+    /// What the last sync of the root folder did, for the markup-file menu.
+    sync_status: String,
     file_tree: Controller<FileTree>,
     editor: Controller<Editor>,
     review: Controller<Review>,
+    processing: Controller<Processing>,
     root: PathBuf,
     view_stack: adw::ViewStack,
 }
@@ -31,6 +38,19 @@ pub enum AppMsg {
     FileChanged(PathBuf),
     /// From the review page: show this region in the editor.
     OpenRegion(PathBuf, Id),
+    /// Markup file on the volume (the tree root): create it at the root, or in
+    /// a folder the user picks.
+    CreateStateFile {
+        here: bool,
+    },
+    /// Point at an existing markup file (its folder).
+    FindStateFile,
+    StateFileFolder {
+        location: PathBuf,
+        must_exist: bool,
+    },
+    SyncNow,
+    DisableSync,
 }
 
 #[relm4::component(pub)]
@@ -44,6 +64,7 @@ impl SimpleComponent for App {
         #[root]
         adw::ApplicationWindow {
             set_title: Some("Sample Creator"),
+            set_icon_name: Some(crate::APP_ID),
             set_default_size: (1200, 760),
 
             adw::ToolbarView {
@@ -52,6 +73,66 @@ impl SimpleComponent for App {
                         set_icon_name: "folder-open-symbolic",
                         set_tooltip_text: Some("Открыть папку"),
                         connect_clicked => AppMsg::ChooseRoot,
+                    },
+
+                    pack_end = &gtk::MenuButton {
+                        set_icon_name: "emblem-synchronizing-symbolic",
+                        set_tooltip_text: Some("Разметка на носителе"),
+                        #[wrap(Some)]
+                        set_popover = &gtk::Popover {
+                            gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_spacing: 8,
+                                set_margin_all: 8,
+                                set_width_request: 320,
+
+                                gtk::Label {
+                                    set_label: "Файл разметки на носителе",
+                                    add_css_class: "heading",
+                                    set_xalign: 0.0,
+                                },
+                                gtk::Label {
+                                    #[watch]
+                                    set_label: &model.sync_text(),
+                                    set_wrap: true,
+                                    set_xalign: 0.0,
+                                    set_max_width_chars: 40,
+                                    add_css_class: "dim-label",
+                                },
+                                gtk::Button {
+                                    set_label: "Создать в корне папки",
+                                    #[watch]
+                                    set_visible: !model.sync_enabled(),
+                                    connect_clicked => AppMsg::CreateStateFile { here: true },
+                                },
+                                gtk::Button {
+                                    set_label: "Создать в папке…",
+                                    #[watch]
+                                    set_visible: !model.sync_enabled(),
+                                    connect_clicked => AppMsg::CreateStateFile { here: false },
+                                },
+                                gtk::Button {
+                                    set_label: "Указать существующий…",
+                                    #[watch]
+                                    set_visible: !model.sync_enabled(),
+                                    connect_clicked => AppMsg::FindStateFile,
+                                },
+                                gtk::Button {
+                                    set_label: "Синхронизировать сейчас",
+                                    add_css_class: "suggested-action",
+                                    #[watch]
+                                    set_visible: model.sync_enabled(),
+                                    connect_clicked => AppMsg::SyncNow,
+                                },
+                                gtk::Button {
+                                    set_label: "Отключить",
+                                    add_css_class: "flat",
+                                    #[watch]
+                                    set_visible: model.sync_enabled(),
+                                    connect_clicked => AppMsg::DisableSync,
+                                },
+                            },
+                        },
                     },
 
                     #[wrap(Some)]
@@ -96,6 +177,7 @@ impl SimpleComponent for App {
                     },
 
                     add_titled_with_icon[Some("review"), "Обзор регионов", "view-list-symbolic"] = model.review.widget(),
+                    add_titled_with_icon[Some("processing"), "Обработка", "preferences-system-symbolic"] = model.processing.widget(),
                 },
             },
         }
@@ -107,6 +189,12 @@ impl SimpleComponent for App {
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         adw::StyleManager::default().set_color_scheme(adw::ColorScheme::PreferDark);
+        // Installed builds find the icon in share/icons; `cargo run` in the tree.
+        if let Some(display) = gdk::Display::default() {
+            gtk::IconTheme::for_display(&display)
+                .add_search_path(concat!(env!("CARGO_MANIFEST_DIR"), "/data/icons"));
+        }
+        gtk::Window::set_default_icon_name(crate::APP_ID);
 
         let library = Rc::new(Library::open_default().unwrap_or_else(|err| {
             // Still usable for listening; markup just won't outlive the session.
@@ -127,11 +215,15 @@ impl SimpleComponent for App {
                 None
             }
         };
+        let processing = Processing::builder()
+            .launch((player.clone(), library.clone()))
+            .detach();
         let review = Review::builder()
             .launch((player.clone(), library.clone()))
             .forward(sender.input_sender(), |out| match out {
                 ReviewOutput::Open(path, id) => AppMsg::OpenRegion(path, id),
             });
+        let library_for_app = library.clone();
         let editor =
             Editor::builder()
                 .launch((player, library))
@@ -141,9 +233,12 @@ impl SimpleComponent for App {
 
         let mut model = App {
             window: window.clone(),
+            library: library_for_app,
+            sync_status: String::new(),
             file_tree,
             editor,
             review,
+            processing,
             root: root_dir,
             view_stack: adw::ViewStack::new(),
         };
@@ -151,16 +246,30 @@ impl SimpleComponent for App {
         model.view_stack = widgets.view_stack.clone();
 
         // The player is shared: whichever page becomes visible takes it over.
-        let (editor_tx, review_tx) = (model.editor.sender().clone(), model.review.sender().clone());
+        let (editor_tx, review_tx, processing_tx) = (
+            model.editor.sender().clone(),
+            model.review.sender().clone(),
+            model.processing.sender().clone(),
+        );
         widgets
             .view_stack
             .connect_visible_child_name_notify(move |stack| {
-                if stack.visible_child_name().as_deref() == Some("review") {
+                let page = stack.visible_child_name();
+                let page = page.as_deref().unwrap_or("markup");
+                // Everyone else lets go first, then the new page takes over.
+                if page != "markup" {
                     editor_tx.emit(EditorMsg::Pause);
-                    review_tx.emit(ReviewMsg::Refresh);
-                } else {
+                }
+                if page != "review" {
                     review_tx.emit(ReviewMsg::Leave);
-                    editor_tx.emit(EditorMsg::Reattach);
+                }
+                if page != "processing" {
+                    processing_tx.emit(ProcessingMsg::Leave);
+                }
+                match page {
+                    "review" => review_tx.emit(ReviewMsg::Refresh),
+                    "processing" => processing_tx.emit(ProcessingMsg::Refresh),
+                    _ => editor_tx.emit(EditorMsg::Reattach),
                 }
             });
 
@@ -169,7 +278,19 @@ impl SimpleComponent for App {
             &widgets.view_stack,
             model.editor.sender().clone(),
             model.review.sender().clone(),
+            model.processing.sender().clone(),
         ));
+        // Closing the window writes the markup out to volumes that keep it.
+        let lib = model.library.clone();
+        window.connect_close_request(move |_| {
+            for (root, r) in sync::sync_all(&lib) {
+                if let Err(err) = r {
+                    eprintln!("sync {}: {err:#}", root.display());
+                }
+            }
+            glib::Propagation::Proceed
+        });
+        model.sync_root(&sender);
         if let Some(path) = open_file {
             model.editor.emit(EditorMsg::Open(path));
         }
@@ -193,12 +314,126 @@ impl SimpleComponent for App {
             AppMsg::SetRoot(dir) => {
                 self.root = dir.clone();
                 self.file_tree.emit(FileTreeInput::SetRoot(dir));
+                self.sync_root(&sender);
             }
-            AppMsg::FileSelected(path) => self.editor.emit(EditorMsg::Open(path)),
+            AppMsg::FileSelected(path) => {
+                // The previous recording's edits go out, the volume's news come in.
+                self.sync_root(&sender);
+                self.editor.emit(EditorMsg::Open(path));
+            }
+            AppMsg::CreateStateFile { here: true } => {
+                let location = self.root.clone();
+                sender.input(AppMsg::StateFileFolder {
+                    location,
+                    must_exist: false,
+                });
+            }
+            AppMsg::CreateStateFile { here: false } => {
+                self.pick_folder("Где хранить файл разметки", false, &sender);
+            }
+            AppMsg::FindStateFile => {
+                self.pick_folder(&format!("Папка с {}", sync::FILE_NAME), true, &sender);
+            }
+            AppMsg::StateFileFolder {
+                location,
+                must_exist,
+            } => {
+                let result = sync::enable(&self.library, &self.root, &location, must_exist);
+                self.after_sync(result, &sender);
+            }
+            AppMsg::SyncNow => {
+                let result = sync::sync_target(&self.library, &self.root);
+                self.after_sync(result, &sender);
+            }
+            AppMsg::DisableSync => {
+                if let Err(err) = sync::disable(&self.library, &self.root) {
+                    self.sync_status = format!("Не удалось: {err:#}");
+                } else {
+                    self.sync_status = "Отключено; файл остался на носителе".into();
+                }
+            }
             AppMsg::FileChanged(path) => self.file_tree.emit(FileTreeInput::Refresh(path)),
             AppMsg::OpenRegion(path, id) => {
                 self.view_stack.set_visible_child_name("markup");
                 self.editor.emit(EditorMsg::OpenAt(path, Item::Region(id)));
+            }
+        }
+    }
+}
+
+impl App {
+    fn sync_enabled(&self) -> bool {
+        sync::target(&self.library, &self.root).is_some()
+    }
+
+    fn sync_text(&self) -> String {
+        let state = match sync::target(&self.library, &self.root) {
+            None => format!(
+                "Разметка этой папки хранится только в приложении. Файл {} на \
+                 носителе возит её вместе с записями на другое устройство; \
+                 синхронизация сама при выборе папки, смене записи и закрытии \
+                 окна. Побеждает более поздняя правка каждой записи.",
+                sync::FILE_NAME
+            ),
+            Some(t) if !t.available() => format!("{}\nноситель не подключён", t.file().display()),
+            Some(t) => format!("{}", t.file().display()),
+        };
+        if self.sync_status.is_empty() {
+            state
+        } else {
+            format!("{state}\n\n{}", self.sync_status)
+        }
+    }
+
+    fn pick_folder(&self, title: &str, must_exist: bool, sender: &ComponentSender<Self>) {
+        let dialog = gtk::FileDialog::builder()
+            .title(title)
+            .initial_folder(&gio::File::for_path(&self.root))
+            .build();
+        let sender = sender.clone();
+        dialog.select_folder(Some(&self.window), gio::Cancellable::NONE, move |result| {
+            if let Some(location) = result.ok().and_then(|f| f.path()) {
+                sender.input(AppMsg::StateFileFolder {
+                    location,
+                    must_exist,
+                });
+            }
+        });
+    }
+
+    /// Quiet sync of the tree root, if it keeps a markup file and is plugged in.
+    fn sync_root(&mut self, sender: &ComponentSender<Self>) {
+        if sync::target(&self.library, &self.root).is_some_and(|t| t.available()) {
+            let result = sync::sync_target(&self.library, &self.root);
+            self.after_sync(result, sender);
+        }
+    }
+
+    fn after_sync(
+        &mut self,
+        result: anyhow::Result<sync::Report>,
+        _sender: &ComponentSender<Self>,
+    ) {
+        match result {
+            Ok(r) => {
+                self.sync_status = format!(
+                    "Синхронизировано: с носителя записей — {}, на носитель — {}",
+                    r.imported, r.exported
+                );
+                if r.imported > 0 {
+                    // Regions were replaced: show what is stored now.
+                    self.file_tree
+                        .emit(FileTreeInput::SetRoot(self.root.clone()));
+                    self.processing.emit(ProcessingMsg::Synced);
+                    self.review.emit(ReviewMsg::Refresh);
+                    if self.view_stack.visible_child_name().as_deref() == Some("markup") {
+                        self.editor.emit(EditorMsg::Reattach);
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("sync: {err:#}");
+                self.sync_status = format!("Не удалось: {err:#}");
             }
         }
     }
@@ -217,18 +452,53 @@ fn editor_keys(
     stack: &adw::ViewStack,
     editor: relm4::Sender<EditorMsg>,
     review: relm4::Sender<ReviewMsg>,
+    processing: relm4::Sender<ProcessingMsg>,
 ) -> gtk::EventControllerKey {
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     let (window, stack) = (window.clone(), stack.clone());
     keys.connect_key_pressed(move |_, key, keycode, mods| {
-        // On the review page the editor keys do not apply; Space stops a preview.
-        if stack.visible_child_name().as_deref() == Some("review") {
-            if key == gdk::Key::space {
+        // Off the markup page the editor keys do not apply; Space stops a preview.
+        let ctrl = mods.contains(gdk::ModifierType::CONTROL_MASK);
+        let shift = mods.contains(gdk::ModifierType::SHIFT_MASK);
+        let on_processing = stack.visible_child_name().as_deref() == Some("processing");
+        // Delete / Backspace on the processing page drops the selected part.
+        if on_processing
+            && !ctrl
+            && matches!(key, gdk::Key::Delete | gdk::Key::BackSpace)
+            && !gtk::prelude::GtkWindowExt::focus(&window).is_some_and(|w| w.is::<gtk::Text>())
+        {
+            processing.emit(ProcessingMsg::DeleteSelectedPart);
+            return glib::Propagation::Stop;
+        }
+        if on_processing && ctrl {
+            let typing =
+                gtk::prelude::GtkWindowExt::focus(&window).is_some_and(|w| w.is::<gtk::Text>());
+            // Undo on the processing page; letters by physical key, as below.
+            let display = gtk::prelude::WidgetExt::display(&window);
+            let key = (0..4)
+                .filter_map(|group| display.translate_key(keycode, mods, group))
+                .map(|(k, ..)| k)
+                .find(|k| k.to_unicode().is_some_and(|c| c.is_ascii_graphic()))
+                .unwrap_or(key);
+            match key.to_lower() {
+                gdk::Key::z if !typing && shift => processing.emit(ProcessingMsg::Redo),
+                gdk::Key::z if !typing => processing.emit(ProcessingMsg::Undo),
+                gdk::Key::y if !typing => processing.emit(ProcessingMsg::Redo),
+                _ => return glib::Propagation::Proceed,
+            }
+            return glib::Propagation::Stop;
+        }
+        match stack.visible_child_name().as_deref() {
+            Some("review") | Some("processing") => {
+                if key != gdk::Key::space {
+                    return glib::Propagation::Proceed;
+                }
                 review.emit(ReviewMsg::Leave);
+                processing.emit(ProcessingMsg::Leave);
                 return glib::Propagation::Stop;
             }
-            return glib::Propagation::Proceed;
+            _ => {}
         }
         // Letters by physical key, so M/I/O/R work with a Cyrillic layout too:
         // take the first layout group where the key produces a Latin character.
@@ -243,8 +513,6 @@ fn editor_keys(
         if typing || mods.contains(gdk::ModifierType::ALT_MASK) {
             return glib::Propagation::Proceed;
         }
-        let ctrl = mods.contains(gdk::ModifierType::CONTROL_MASK);
-        let shift = mods.contains(gdk::ModifierType::SHIFT_MASK);
         let msg = match (ctrl, key.to_lower()) {
             (true, gdk::Key::z) if shift => EditorMsg::Redo,
             (true, gdk::Key::z) => EditorMsg::Undo,

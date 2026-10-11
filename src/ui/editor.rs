@@ -13,13 +13,12 @@ use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent};
 use super::context_menu;
 use super::markup_list::{ListEvent, MarkupList};
 use super::waveform::{WaveEvent, Waveform, format_time};
-use crate::audio::decode::{self, AudioInfo};
+use crate::audio::decode::AudioInfo;
 use crate::audio::peaks::{self, PeakJob};
 use crate::audio::player::Player;
 use crate::core::history::{Change, History};
-use crate::core::{
-    ChannelMode, ColorIdx, Id, Item, Marker, Markup, PALETTE, RECORDER_MARK_COLOR, Region,
-};
+use crate::core::{ChannelMode, ColorIdx, Id, Item, Marker, Markup, PALETTE, Region};
+use crate::recording;
 use crate::store::{FileRecord, Library};
 
 struct Loaded {
@@ -552,44 +551,13 @@ impl Editor {
     }
 
     fn load(&mut self, path: &std::path::Path) -> anyhow::Result<Loaded> {
-        let info = decode::probe(path)?;
-        let fingerprint = crate::audio::fingerprint(path)?;
-        let mut record = self.library.file(
-            fingerprint,
-            path,
-            info.sample_rate,
-            info.channels,
-            info.total_frames,
-        )?;
-        let mut markup = self.library.markup(record.id)?;
-
-        // Recorder marks become ordinary markers once; after that they are ours to edit.
-        if !record.cues_imported {
-            let imported = info
-                .cues
-                .iter()
-                .map(|c| {
-                    Change::add_marker(Marker {
-                        id: 0,
-                        file: record.id,
-                        pos: c.frame,
-                        name: c.label.clone().unwrap_or_default(),
-                        color: RECORDER_MARK_COLOR,
-                        from_recorder: true,
-                    })
-                })
-                .collect();
-            History::default().apply(&mut markup, &*self.library, imported)?;
-            self.library.set_cues_imported(record.id)?;
-            record.cues_imported = true;
-        }
-
-        let job = peaks::start(path, usize::from(info.channels), info.total_frames);
+        let rec = recording::open(&self.library, path)?;
+        let job = peaks::start(path, usize::from(rec.info.channels), rec.info.total_frames);
         Ok(Loaded {
-            path: path.to_path_buf(),
-            info,
-            record,
-            markup,
+            path: rec.path,
+            info: rec.info,
+            record: rec.record,
+            markup: rec.markup,
             _peaks: job,
         })
     }
@@ -883,6 +851,9 @@ impl Editor {
             color: self.color,
             export: true,
             channels: ChannelMode::AsSource,
+            speed: 100,
+            keep_pitch: false,
+            parts: Vec::new(),
         };
         let created = self.commit(vec![Change::add_region(region)]);
         if created {

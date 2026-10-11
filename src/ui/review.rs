@@ -14,7 +14,7 @@ use relm4::gtk::{self, gio, glib};
 use relm4::{ComponentParts, ComponentSender, SimpleComponent};
 
 use super::markup_list::color_swatch;
-use super::waveform::{color_rgba, format_time};
+use super::waveform::{color_rgba, envelope, fill_envelope, format_time};
 use crate::audio::peaks::{self, PeakJob};
 use crate::audio::player::Player;
 use crate::core::history::Store;
@@ -493,10 +493,11 @@ impl Review {
         text.append(
             &gtk::Label::builder()
                 .label(format!(
-                    "{} – {} · {:.2} с{channels}",
+                    "{} – {} · {:.2} с{speed}{channels}",
                     format_time(r.start as f64 / rate, true),
                     format_time(r.end as f64 / rate, true),
-                    r.len() as f64 / rate
+                    r.len() as f64 / rate,
+                    speed = speed_note(r, rate),
                 ))
                 .xalign(0.0)
                 .css_classes(["dim-label", "caption", "numeric"])
@@ -648,11 +649,7 @@ impl Review {
                 (source, r.clone())
             })
             .collect();
-        let missing = regions
-            .iter()
-            .filter(|(s, _)| !s.path.exists())
-            .map(|(s, _)| s.path.clone())
-            .collect::<std::collections::BTreeSet<_>>();
+        let missing = export::missing_sources(&regions);
         if !missing.is_empty() {
             self.toast(&format!(
                 "Нет доступа к записям ({}). Подключите рекордер и попробуйте снова",
@@ -675,32 +672,17 @@ impl Review {
         std::thread::Builder::new()
             .name("export".into())
             .spawn(move || {
-                let mut written = 0;
-                let mut errors = Vec::new();
-                let mut done_before = 0;
                 let mut last_report = Instant::now();
-                for item in &planned {
-                    let mut progress = |n: u64| {
-                        if last_report.elapsed() > Duration::from_millis(100) {
-                            input.emit(ReviewMsg::Progress(done_before + n));
-                            last_report = Instant::now();
-                        }
-                    };
-                    match export::render(item, format, &cancel, &mut progress) {
-                        Ok(files) => written += files.len(),
-                        Err(err) => {
-                            if cancel.load(Ordering::Relaxed) {
-                                break;
-                            }
-                            errors.push(format!("{}: {err:#}", item.region.name));
-                        }
+                let report = export::render_all(&planned, format, &cancel, &mut |done| {
+                    if last_report.elapsed() > Duration::from_millis(100) {
+                        input.emit(ReviewMsg::Progress(done));
+                        last_report = Instant::now();
                     }
-                    done_before += item.frames();
-                }
+                });
                 input.emit(ReviewMsg::Finished {
                     dir,
-                    written,
-                    errors,
+                    written: report.written,
+                    errors: report.errors,
                 });
             })
             .expect("spawn export thread");
@@ -769,24 +751,8 @@ fn mini_wave(peaks: Arc<peaks::Peaks>, start: u64, end: u64, color: ColorIdx) ->
             0.9,
         );
         let reader = peaks.read();
-        for x in 0..w as usize {
-            let a = start as f64 + x as f64 * per_px;
-            let (mut lo, mut hi, mut any) = (0f32, 0f32, false);
-            for ch in 0..peaks.channels {
-                if let Some((min, max)) = reader.min_max(ch, a, a + per_px) {
-                    lo = lo.min(min);
-                    hi = hi.max(max);
-                    any = true;
-                }
-            }
-            if !any {
-                break;
-            }
-            let y0 = mid - f64::from(hi) * (mid - 1.0);
-            let y1 = mid - f64::from(lo) * (mid - 1.0);
-            cr.rectangle(x as f64, y0, 1.0, (y1 - y0).max(1.0));
-        }
-        cr.fill().ok();
+        let points = envelope(&reader, 0..peaks.channels, start as f64, per_px, w);
+        fill_envelope(cr, &points, mid, mid - 1.0).ok();
     });
     area
 }
@@ -821,4 +787,32 @@ fn color_filter_bar(sender: &ComponentSender<Review>) -> gtk::Box {
         bar.append(&b);
     }
     bar
+}
+
+/// " → 16.50 с (×2, тон сохранён, склейка)" for processed regions.
+fn speed_note(r: &Region, rate: f64) -> String {
+    if !r.is_processed() {
+        return String::new();
+    }
+    let mut notes = Vec::new();
+    if r.speed != crate::core::SPEED_NORMAL {
+        let factor = format!("×{:.2}", f64::from(r.speed) / 100.0);
+        notes.push(
+            factor
+                .trim_end_matches('0')
+                .trim_end_matches('.')
+                .to_owned(),
+        );
+        if r.keep_pitch {
+            notes.push("тон сохранён".into());
+        }
+    }
+    if r.is_edited() {
+        notes.push("склейка".into());
+    }
+    format!(
+        " → {:.2} с ({})",
+        r.output_len() as f64 / rate,
+        notes.join(", ")
+    )
 }

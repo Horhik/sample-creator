@@ -13,7 +13,7 @@ use std::sync::Arc;
 use relm4::adw;
 use relm4::gtk::{self, cairo, gdk, glib, prelude::*};
 
-use crate::audio::peaks::Peaks;
+use crate::audio::peaks::{self as peaks_mod, Peaks, PeaksReader};
 use crate::core::{ColorIdx, Id, Item, Markup, PALETTE};
 
 const RULER_H: f64 = 20.0;
@@ -21,7 +21,7 @@ const LABEL_H: f64 = 20.0;
 const LANES_TOP: f64 = RULER_H + LABEL_H;
 const OVERVIEW_H: i32 = 44;
 /// Deepest zoom; below this the fine peak bins just repeat.
-const MIN_FRAMES_PER_PX: f64 = 1.0;
+const MIN_FRAMES_PER_PX: f64 = peaks_mod::MIN_FRAMES_PER_PX;
 /// How close (px) the pointer must be to grab a marker or a region edge.
 const GRAB_PX: f64 = 5.0;
 /// Pointer travel (px) that turns a click into a drag.
@@ -761,16 +761,8 @@ fn draw_main(
         cr.fill()?;
 
         set_color(cr, &pal.fg, 0.75);
-        for x in 0..w as usize {
-            let a = s.view_start + x as f64 * s.frames_per_px;
-            let Some((min, max)) = reader.min_max(ch, a, a + s.frames_per_px) else {
-                break;
-            };
-            let y0 = mid - f64::from(max) * half;
-            let y1 = mid - f64::from(min) * half;
-            cr.rectangle(x as f64, y0, 1.0, (y1 - y0).max(1.0));
-        }
-        cr.fill()?;
+        let points = envelope(&reader, ch..ch + 1, s.view_start, s.frames_per_px, w);
+        fill_envelope(cr, &points, mid, half)?;
     }
     drop(reader);
 
@@ -968,26 +960,8 @@ fn draw_overview(
 
     let reader = peaks.read();
     set_color(cr, &pal.fg, 0.45);
-    for x in 0..w as usize {
-        let a = x as f64 * per_px;
-        let mut lo = 0f32;
-        let mut hi = 0f32;
-        let mut any = false;
-        for ch in 0..peaks.channels {
-            if let Some((min, max)) = reader.min_max(ch, a, a + per_px) {
-                lo = lo.min(min);
-                hi = hi.max(max);
-                any = true;
-            }
-        }
-        if !any {
-            break;
-        }
-        let y0 = mid - f64::from(hi) * (mid - 2.0);
-        let y1 = mid - f64::from(lo) * (mid - 2.0);
-        cr.rectangle(x as f64, y0, 1.0, (y1 - y0).max(1.0));
-    }
-    cr.fill()?;
+    let points = envelope(&reader, 0..peaks.channels, 0.0, per_px, w);
+    fill_envelope(cr, &points, mid, mid - 2.0)?;
     drop(reader);
 
     for m in &s.markup.markers {
@@ -1034,6 +1008,83 @@ pub fn format_time(secs: f64, fine: bool) -> String {
     }
 }
 
+/// Min/max columns of `channels` (merged) across `[0, w)` px from frame
+/// `start` at `fpp` frames per pixel: one per pixel, or one per summary bin
+/// once a bin spans several pixels, so deep zoom gets a smooth curve between
+/// bins instead of steps. Stops where the summary is not computed yet.
+pub(crate) fn envelope(
+    reader: &PeaksReader,
+    channels: std::ops::Range<usize>,
+    start: f64,
+    fpp: f64,
+    w: f64,
+) -> Vec<(f64, f32, f32)> {
+    let step = (peaks_mod::FINE as f64 / fpp.max(1e-9)).max(1.0);
+    let mut out = Vec::with_capacity((w / step) as usize + 2);
+    let mut x = 0.0;
+    while x < w + step {
+        let a = start + x * fpp;
+        let (mut lo, mut hi, mut any) = (0f32, 0f32, false);
+        for ch in channels.clone() {
+            if let Some((min, max)) = reader.min_max(ch, a, a + step * fpp) {
+                lo = lo.min(min);
+                hi = hi.max(max);
+                any = true;
+            }
+        }
+        if !any {
+            break;
+        }
+        out.push((x + step / 2.0, lo, hi));
+        x += step;
+    }
+    out
+}
+
+/// Fills the area between the max and min curves of `points` (from
+/// [`envelope`]) around `mid`, with smooth (Catmull-Rom) edges.
+pub(crate) fn fill_envelope(
+    cr: &cairo::Context,
+    points: &[(f64, f32, f32)],
+    mid: f64,
+    half: f64,
+) -> Result<(), cairo::Error> {
+    if points.is_empty() {
+        return Ok(());
+    }
+    let top: Vec<(f64, f64)> = points
+        .iter()
+        .map(|&(x, _, hi)| (x, mid - f64::from(hi) * half - 0.5))
+        .collect();
+    let bottom: Vec<(f64, f64)> = points
+        .iter()
+        .rev()
+        .map(|&(x, lo, _)| (x, mid - f64::from(lo) * half + 0.5))
+        .collect();
+    cr.move_to(top[0].0, top[0].1);
+    smooth_through(cr, &top);
+    cr.line_to(bottom[0].0, bottom[0].1);
+    smooth_through(cr, &bottom);
+    cr.close_path();
+    cr.fill()
+}
+
+/// Cubic segments through `p[1..]` from the current point `p[0]`.
+fn smooth_through(cr: &cairo::Context, p: &[(f64, f64)]) {
+    let at = |i: isize| p[i.clamp(0, p.len() as isize - 1) as usize];
+    for i in 0..p.len().saturating_sub(1) as isize {
+        let (p0, p1, p2, p3) = (at(i - 1), at(i), at(i + 1), at(i + 2));
+        cr.curve_to(
+            p1.0 + (p2.0 - p0.0) / 6.0,
+            p1.1 + (p2.1 - p0.1) / 6.0,
+            p2.0 - (p3.0 - p1.0) / 6.0,
+            p2.1 - (p3.1 - p1.1) / 6.0,
+            p2.0,
+            p2.1,
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1054,14 +1105,17 @@ mod tests {
         let mut s = State {
             total_frames: 1_000_000,
             width: 1000.0,
-            frames_per_px: 100.0,
+            frames_per_px: 400.0,
             view_start: 200_000.0,
             ..Default::default()
         };
         let before = s.frame_at(250.0);
         s.zoom_at(250.0, 0.5);
-        assert_eq!(s.frames_per_px, 50.0);
+        assert_eq!(s.frames_per_px, 200.0);
         assert_eq!(s.frame_at(250.0), before);
+        // Never closer than the shared limit.
+        s.zoom_at(250.0, 1e-9);
+        assert_eq!(s.frames_per_px, MIN_FRAMES_PER_PX);
 
         s.zoom_at(0.0, 1e9);
         assert_eq!((s.frames_per_px, s.view_start), (1000.0, 0.0));
@@ -1078,6 +1132,9 @@ mod tests {
             color: 0,
             export: true,
             channels: ChannelMode::AsSource,
+            speed: 100,
+            keep_pitch: false,
+            parts: Vec::new(),
         };
         // 1 frame per px, so x == frame.
         let s = State {

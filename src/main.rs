@@ -1,8 +1,7 @@
 use std::path::PathBuf;
 
 use relm4::RelmApp;
-
-const APP_ID: &str = "io.github.horhik.SampleCreator";
+use sample_creator::APP_ID;
 
 fn main() {
     // GTK would try to treat the argument as a file to open; we handle it ourselves.
