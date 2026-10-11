@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- A waveform with one region picked out: the whole app in one picture. -->
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="#1d2433"/>
+  <rect x="43" y="22" width="42" height="84" rx="12" fill="#62a0ea" opacity="0.32"/>
+  <g stroke-linecap="round" stroke-width="8">
+    <g stroke="#7d8799">
+      <line x1="22" y1="54" x2="22" y2="74"/>
+      <line x1="34" y1="44" x2="34" y2="84"/>
+      <line x1="94" y1="48" x2="94" y2="80"/>
+      <line x1="106" y1="57" x2="106" y2="71"/>
+    </g>
+    <g stroke="#ffffff">
+      <line x1="52" y1="38" x2="52" y2="90"/>
+      <line x1="64" y1="30" x2="64" y2="98"/>
+      <line x1="76" y1="42" x2="76" y2="86"/>
+    </g>
+  </g>
+</svg>
