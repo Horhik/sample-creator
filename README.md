@@ -23,6 +23,14 @@
 MP3 и FLAC. Записи на несколько часов — норма: всё читается потоково.
 
 <p align="center">
+  <img src="docs/screenshots/desktop-editor.jpg" width="90%" alt="Десктоп: разметка">
+</p>
+<p align="center">
+  <img src="docs/screenshots/desktop-review.jpg" width="44%" alt="Десктоп: обзор регионов">
+  <img src="docs/screenshots/desktop-processing.jpg" width="44%" alt="Десктоп: обработка и нарезка">
+</p>
+
+<p align="center">
   <img src="docs/screenshots/editor.png" width="24%" alt="Разметка">
   <img src="docs/screenshots/review.png" width="24%" alt="Обзор регионов">
   <img src="docs/screenshots/processing.png" width="24%" alt="Обработка">
