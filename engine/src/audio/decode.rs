@@ -45,6 +45,44 @@ pub trait FrameSource: Send {
     fn read(&mut self, out: &mut Vec<f32>, max_frames: usize) -> Result<usize>;
 }
 
+/// Audio already in memory, e.g. a processed region for preview.
+pub struct MemorySource {
+    samples: std::sync::Arc<Vec<f32>>,
+    channels: usize,
+    pos: usize,
+}
+
+impl MemorySource {
+    pub fn new(samples: std::sync::Arc<Vec<f32>>, channels: usize) -> Self {
+        MemorySource {
+            samples,
+            channels,
+            pos: 0,
+        }
+    }
+
+    pub fn frames(&self) -> u64 {
+        (self.samples.len() / self.channels) as u64
+    }
+}
+
+impl FrameSource for MemorySource {
+    fn seek(&mut self, frame: u64) -> Result<()> {
+        self.pos = (frame as usize).min(self.samples.len() / self.channels);
+        Ok(())
+    }
+
+    fn read(&mut self, out: &mut Vec<f32>, max_frames: usize) -> Result<usize> {
+        let total = self.samples.len() / self.channels;
+        let n = max_frames.min(total - self.pos);
+        out.extend_from_slice(
+            &self.samples[self.pos * self.channels..(self.pos + n) * self.channels],
+        );
+        self.pos += n;
+        Ok(n)
+    }
+}
+
 pub fn probe(path: &Path) -> Result<AudioInfo> {
     Ok(open(path)?.0)
 }

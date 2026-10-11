@@ -1,6 +1,9 @@
 //! Markup model and undo history. No GTK, no I/O beyond the `Store` trait.
 
 pub mod history;
+pub mod parts;
+
+pub use parts::Part;
 
 /// Database id; 0 means "not stored yet".
 pub type Id = i64;
@@ -76,9 +79,36 @@ pub struct Region {
     pub color: ColorIdx,
     pub export: bool,
     pub channels: ChannelMode,
+    /// Playback speed in percent: 200 plays twice as fast (half as long).
+    pub speed: u16,
+    /// Change tempo only (time-stretch) instead of tempo and pitch together.
+    pub keep_pitch: bool,
+    /// Pieces of the region spliced together in this order, with fades. Empty
+    /// means the whole region as is. See [`Region::effective_parts`].
+    pub parts: Vec<Part>,
 }
 
+pub const SPEED_MIN: u16 = 25;
+pub const SPEED_MAX: u16 = 400;
+pub const SPEED_NORMAL: u16 = 100;
+
 impl Region {
+    /// Length in frames after splicing and the speed change.
+    pub fn output_len(&self) -> u64 {
+        let spliced = parts::spliced_len(&self.effective_parts());
+        (spliced as f64 * f64::from(SPEED_NORMAL) / f64::from(self.speed.max(1))).round() as u64
+    }
+
+    /// The sound differs from a plain copy of `[start, end)`.
+    pub fn is_processed(&self) -> bool {
+        self.speed != SPEED_NORMAL || self.is_edited()
+    }
+
+    /// Cut, rearranged or faded.
+    pub fn is_edited(&self) -> bool {
+        self.effective_parts() != [Part::whole(self.start, self.end)]
+    }
+
     pub fn len(&self) -> u64 {
         self.end - self.start
     }

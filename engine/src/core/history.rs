@@ -111,6 +111,61 @@ impl History {
     }
 }
 
+/// Undo for edits of whole regions made outside a file's markup, e.g. on the
+/// processing page where regions of every recording are edited. Each entry is
+/// the region before and after one action.
+#[derive(Default)]
+pub struct RegionHistory {
+    undo: Vec<(Region, Region)>,
+    redo: Vec<(Region, Region)>,
+}
+
+impl RegionHistory {
+    /// Saves `after` and remembers how to go back to `before`.
+    pub fn apply(&mut self, store: &dyn Store, before: Region, after: Region) -> Result<()> {
+        if before == after {
+            return Ok(());
+        }
+        store.save_region(&after)?;
+        self.undo.push((before, after));
+        self.redo.clear();
+        Ok(())
+    }
+
+    /// Restores the previous state; returns the region as saved.
+    pub fn undo(&mut self, store: &dyn Store) -> Result<Option<Region>> {
+        let Some((before, after)) = self.undo.pop() else {
+            return Ok(None);
+        };
+        store.save_region(&before)?;
+        self.redo.push((before.clone(), after));
+        Ok(Some(before))
+    }
+
+    pub fn redo(&mut self, store: &dyn Store) -> Result<Option<Region>> {
+        let Some((before, after)) = self.redo.pop() else {
+            return Ok(None);
+        };
+        store.save_region(&after)?;
+        self.undo.push((before, after.clone()));
+        Ok(Some(after))
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
+    /// Forgets a region that was deleted elsewhere, so undo cannot resurrect it.
+    pub fn forget(&mut self, id: Id) {
+        self.undo.retain(|(b, _)| b.id != id);
+        self.redo.retain(|(b, _)| b.id != id);
+    }
+}
+
 fn apply_all(markup: &mut Markup, store: &dyn Store, changes: Vec<Change>) -> Result<Vec<Change>> {
     let mut applied = Vec::with_capacity(changes.len());
     let mut pending = changes.into_iter();
@@ -268,6 +323,9 @@ mod tests {
             color: 3,
             export: true,
             channels: ChannelMode::AsSource,
+            speed: 100,
+            keep_pitch: false,
+            parts: Vec::new(),
         }
     }
 
@@ -368,5 +426,31 @@ mod tests {
         assert!(result.is_err());
         assert!(markup.markers.is_empty() && store.markers.borrow().is_empty());
         assert!(!history.can_undo());
+    }
+
+    #[test]
+    fn region_history_undoes_and_redoes_whole_regions() {
+        let store = MemStore::default();
+        let mut r = region(0, 1000);
+        r.id = store.save_region(&r).unwrap();
+        let mut h = RegionHistory::default();
+
+        let mut cut = r.clone();
+        cut.split_at(400);
+        h.apply(&store, r.clone(), cut.clone()).unwrap();
+        let mut faster = cut.clone();
+        faster.speed = 200;
+        h.apply(&store, cut.clone(), faster.clone()).unwrap();
+        assert_eq!(store.regions.borrow()[&r.id], faster);
+
+        assert_eq!(h.undo(&store).unwrap(), Some(cut.clone()));
+        assert_eq!(h.undo(&store).unwrap(), Some(r.clone()));
+        assert_eq!(store.regions.borrow()[&r.id], r);
+        assert!(!h.can_undo());
+        assert_eq!(h.redo(&store).unwrap(), Some(cut.clone()));
+        assert_eq!(store.regions.borrow()[&r.id], cut);
+        // A no-op is not an action.
+        h.apply(&store, cut.clone(), cut).unwrap();
+        assert!(h.can_redo());
     }
 }

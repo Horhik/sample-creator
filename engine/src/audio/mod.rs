@@ -44,8 +44,19 @@ pub fn fingerprint(path: &Path) -> io::Result<u64> {
     Ok(hasher.digest())
 }
 
-/// `$XDG_CACHE_HOME/sample-creator`
+static CACHE_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Overrides [`cache_dir`] where there is no XDG, e.g. the app cache on Android.
+/// Only the first call counts.
+pub fn set_cache_dir(dir: PathBuf) {
+    let _ = CACHE_DIR.set(dir);
+}
+
+/// `$XDG_CACHE_HOME/sample-creator`, unless [`set_cache_dir`] said otherwise.
 pub fn cache_dir() -> Option<PathBuf> {
+    if let Some(dir) = CACHE_DIR.get() {
+        return Some(dir.clone());
+    }
     let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;

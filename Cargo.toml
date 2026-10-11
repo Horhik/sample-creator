@@ -2,12 +2,21 @@
 name = "sample-creator"
 version = "0.1.0"
 edition = "2024"
+description = "Mark up long field recordings and cut them into samples (GTK4)"
+license = "MIT"
+repository = "https://github.com/Horhik/sample-creator"
+
+[workspace]
+members = ["engine", "mobile/rust"]
 
 [dependencies]
 anyhow = "1.0.104"
-cpal = "0.18.2"
-crossbeam-channel = "0.5.17"
 relm4 = { version = "0.11.0", features = ["libadwaita", "gnome_48"] }
-rusqlite = { version = "0.40.2", features = ["bundled"] }
-symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "flac"] }
-xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
+sample-creator-engine = { path = "engine" }
+
+# DSP and peak scanning are unusable unoptimised; keep `cargo run` responsive.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

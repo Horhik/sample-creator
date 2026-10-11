@@ -49,6 +49,12 @@ impl Shared {
 
 enum Cmd {
     Load(PathBuf),
+    /// Play from memory instead of a file.
+    LoadMemory {
+        source: decode::MemorySource,
+        channels: u16,
+        sample_rate: u32,
+    },
     Unload,
     Seek(u64),
     /// Play only `[start, end)`; `None` end means to the end of the file.
@@ -110,6 +116,17 @@ impl Player {
         self.pause();
         self.shared.set_position(0.0);
         self.send(Cmd::Load(path));
+    }
+
+    /// Plays `samples` (interleaved) instead of a file; positions are frames into it.
+    pub fn load_memory(&self, samples: Arc<Vec<f32>>, channels: u16, sample_rate: u32) {
+        self.pause();
+        self.shared.set_position(0.0);
+        self.send(Cmd::LoadMemory {
+            source: decode::MemorySource::new(samples, usize::from(channels)),
+            channels,
+            sample_rate,
+        });
     }
 
     pub fn unload(&self) {
@@ -325,6 +342,20 @@ impl Decoder {
                         self.flush();
                     }
                 }
+            }
+            Cmd::LoadMemory {
+                source,
+                channels,
+                sample_rate,
+            } => {
+                self.range_start = 0;
+                self.range_end = None;
+                self.looping = false;
+                self.total_frames = source.frames();
+                self.source = Some(Box::new(source));
+                self.src_channels = usize::from(channels);
+                self.step = f64::from(sample_rate) / f64::from(self.out_rate);
+                self.reposition(0);
             }
             Cmd::Unload => {
                 self.source = None;

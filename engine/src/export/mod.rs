@@ -10,8 +10,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::{Context, Result, bail};
 
 use crate::audio::bwf::{Bext, SampleFormat};
-use crate::audio::decode;
+use crate::audio::decode::{self, FrameSource, MemorySource};
 use crate::core::{ChannelMode, PALETTE, Region};
+use crate::dsp;
 use wav::WavWriter;
 
 pub const DEFAULT_TEMPLATE: &str = "{name}";
@@ -86,8 +87,9 @@ pub struct Planned {
 }
 
 impl Planned {
+    /// Frames that will be written, over all outputs (after the speed change).
     pub fn frames(&self) -> u64 {
-        self.region.len() * self.outputs.len() as u64
+        self.region.output_len() * self.outputs.len() as u64
     }
 }
 
@@ -211,6 +213,16 @@ pub fn render(
     let channels = usize::from(info.channels);
     let bext = output_bext(&item.source.path, &info, region);
 
+    // A processed region is short: render it into memory once and write from there.
+    let (mut source, offset, len): (Box<dyn FrameSource>, u64, u64) = if region.is_processed() {
+        let samples = process(read_region(&mut *source, region, channels)?, &info, region);
+        let mem = MemorySource::new(std::sync::Arc::new(samples), channels);
+        let frames = mem.frames();
+        (Box::new(mem), 0, frames)
+    } else {
+        (source, region.start, region.len())
+    };
+
     let mut written = Vec::new();
     let mut done_before = 0u64;
     for (path, pick) in &item.outputs {
@@ -225,18 +237,18 @@ pub fn render(
             info.sample_rate,
             Some(&bext),
         )?;
-        source.seek(region.start)?;
+        source.seek(offset)?;
 
         let mut buf = Vec::new();
         let mut picked = Vec::new();
-        let mut pos = region.start;
-        while pos < region.end {
+        let mut done = 0u64;
+        while done < len {
             if cancel.load(Ordering::Relaxed) {
                 writer.abort();
                 bail!("отменено");
             }
             buf.clear();
-            let want = (region.end - pos).min(65536) as usize;
+            let want = (len - done).min(65536) as usize;
             let read = source.read(&mut buf, want)?;
             if read == 0 {
                 writer.abort();
@@ -254,13 +266,108 @@ pub fn render(
                     writer.write(&picked)?;
                 }
             }
-            pos += read as u64;
-            progress(done_before + (pos - region.start));
+            done += read as u64;
+            progress(done_before + done);
         }
         written.push(writer.finish()?);
-        done_before += region.len();
+        done_before += len;
     }
     Ok(written)
+}
+
+/// The region as it will sound after export (speed applied), all channels,
+/// interleaved, at the source rate. Used for preview.
+/// Outcome of [`render_all`].
+#[derive(Debug, Default)]
+pub struct Report {
+    /// Files written.
+    pub written: usize,
+    /// One line per region that failed.
+    pub errors: Vec<String>,
+    pub cancelled: bool,
+}
+
+/// Recordings among `regions` that cannot be read right now, e.g. on a
+/// recorder that is not plugged in.
+pub fn missing_sources(regions: &[(Source, Region)]) -> Vec<PathBuf> {
+    let missing: std::collections::BTreeSet<_> = regions
+        .iter()
+        .filter(|(s, _)| !s.path.exists())
+        .map(|(s, _)| s.path.clone())
+        .collect();
+    missing.into_iter().collect()
+}
+
+/// Renders every planned region in turn. `progress` gets the frames written so
+/// far over the whole run (see [`Planned::frames`] for the total). A failed
+/// region does not stop the others.
+pub fn render_all(
+    planned: &[Planned],
+    format: OutputFormat,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(u64),
+) -> Report {
+    let mut report = Report::default();
+    let mut done_before = 0;
+    for item in planned {
+        let mut item_progress = |n: u64| progress(done_before + n);
+        match render(item, format, cancel, &mut item_progress) {
+            Ok(files) => report.written += files.len(),
+            Err(err) => {
+                if cancel.load(Ordering::Relaxed) {
+                    report.cancelled = true;
+                    break;
+                }
+                report.errors.push(format!("{}: {err:#}", item.region.name));
+            }
+        }
+        done_before += item.frames();
+    }
+    report
+}
+
+pub fn render_to_memory(path: &Path, region: &Region) -> Result<(decode::AudioInfo, Vec<f32>)> {
+    let (info, mut source) = decode::open(path)?;
+    let channels = usize::from(info.channels);
+    let samples = read_region(&mut *source, region, channels)?;
+    let samples = process(samples, &info, region);
+    Ok((info, samples))
+}
+
+fn read_region(source: &mut dyn FrameSource, region: &Region, channels: usize) -> Result<Vec<f32>> {
+    let mut samples = Vec::with_capacity(region.len() as usize * channels);
+    source.seek(region.start)?;
+    let mut left = region.len();
+    while left > 0 {
+        let read = source.read(&mut samples, left.min(65536) as usize)?;
+        if read == 0 {
+            bail!("запись оборвалась раньше конца региона");
+        }
+        left -= read as u64;
+    }
+    Ok(samples)
+}
+
+fn process(samples: Vec<f32>, info: &decode::AudioInfo, region: &Region) -> Vec<f32> {
+    if !region.is_processed() {
+        return samples;
+    }
+    let channels = usize::from(info.channels);
+    let samples = if region.is_edited() {
+        dsp::splice(&samples, channels, region.start, &region.effective_parts())
+    } else {
+        samples
+    };
+    if region.speed == crate::core::SPEED_NORMAL {
+        return samples;
+    }
+    dsp::change_speed(
+        &samples,
+        usize::from(info.channels),
+        info.sample_rate,
+        f64::from(region.speed) / 100.0,
+        region.keep_pitch,
+    )
 }
 
 /// The exported file points back at where it came from.
@@ -299,6 +406,9 @@ mod tests {
             color: 3,
             export: true,
             channels,
+            speed: 100,
+            keep_pitch: false,
+            parts: Vec::new(),
         }
     }
 
@@ -418,6 +528,88 @@ mod tests {
         right.read(&mut samples, 100).unwrap();
         assert!(samples.iter().all(|&s| (s + 1.0).abs() < 1e-6));
 
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn exports_cut_and_spliced_parts() {
+        let dir = std::env::temp_dir().join(format!("sc-parts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("take.wav");
+        // Left channel counts frames so the splice order is visible.
+        let frames: Vec<[f32; 2]> = (0..4800).map(|i| [i as f32 / 8192.0, 0.0]).collect();
+        std::fs::write(&src, tascam_like(&frames)).unwrap();
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+
+        let mut r = region("cut", 1000, 4000, ChannelMode::Left);
+        r.split_at(2000);
+        r.split_at(3000);
+        r.remove_part(1); // drop 2000..3000
+        r.move_part(1, true); // 3000..4000 first, then 1000..2000
+        let planned = plan(
+            &[(source(src.to_str().unwrap(), "take", 2), r)],
+            "{name}",
+            &out,
+        );
+        assert_eq!(planned[0].frames(), 2000);
+        let files = render(
+            &planned[0],
+            OutputFormat::Float32,
+            &AtomicBool::new(false),
+            &mut |_| {},
+        )
+        .unwrap();
+        let (info, mut left) = decode::open(&files[0]).unwrap();
+        assert_eq!(info.total_frames, 2000);
+        let mut samples = Vec::new();
+        left.read(&mut samples, 2000).unwrap();
+        let frame = |v: f32| (v * 8192.0).round() as u64;
+        assert_eq!(frame(samples[0]), 3000);
+        assert_eq!(frame(samples[999]), 3999);
+        assert_eq!(frame(samples[1000]), 1000);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn exports_with_speed_change() {
+        let dir = std::env::temp_dir().join(format!("sc-speed-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("take.wav");
+        std::fs::write(&src, tascam_like(&[[0.25, -0.25]; 4800])).unwrap();
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+
+        for (keep_pitch, name) in [(false, "fast"), (true, "stretched")] {
+            let mut r = region(name, 1000, 4000, ChannelMode::Left);
+            r.speed = 200;
+            r.keep_pitch = keep_pitch;
+            let planned = plan(
+                &[(source(src.to_str().unwrap(), "take", 2), r)],
+                "{name}",
+                &out,
+            );
+            assert_eq!(planned[0].frames(), 1500);
+            let mut last = 0;
+            let files = render(
+                &planned[0],
+                OutputFormat::AsSource,
+                &AtomicBool::new(false),
+                &mut |n| last = n,
+            )
+            .unwrap();
+            assert_eq!(last, 1500);
+            let (info, mut left) = decode::open(&files[0]).unwrap();
+            assert_eq!((info.channels, info.total_frames), (1, 1500));
+            let mut samples = Vec::new();
+            left.read(&mut samples, 2000).unwrap();
+            // DC stays DC: the middle is untouched by edge effects.
+            assert!(
+                (samples[750] - 0.25).abs() < 1e-3,
+                "{name}: {}",
+                samples[750]
+            );
+        }
         std::fs::remove_dir_all(dir).ok();
     }
 

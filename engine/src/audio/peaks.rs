@@ -19,6 +19,10 @@ use super::decode;
 pub const FINE: u64 = 256;
 pub const COARSE: u64 = FINE * 64;
 
+/// Closest zoom, in frames per pixel: one fine bin spans at most 4 px, so the
+/// waveform stays smooth and fills the view. Deeper would only stretch bins.
+pub const MIN_FRAMES_PER_PX: f64 = FINE as f64 / 4.0;
+
 const CACHE_MAGIC: &[u8; 8] = b"SCPEAK01";
 
 /// One bin of one channel, quantised to i16.
