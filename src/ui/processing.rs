@@ -19,6 +19,7 @@ use crate::core::history::RegionHistory;
 use crate::core::parts::{output_to_source, part_fades, positions, spliced_len};
 use crate::core::{Id, PALETTE, Part, Region, SPEED_MAX, SPEED_MIN, SPEED_NORMAL};
 use crate::export;
+use crate::lang::{sec, tr};
 use crate::store::{FileRow, Library};
 
 const PRESETS: [u16; 7] = [50, 75, 100, 125, 150, 200, 300];
@@ -118,8 +119,8 @@ impl SimpleComponent for Processing {
                     add_named[Some("empty")] = &adw::StatusPage {
                         set_icon_name: Some("preferences-system-symbolic"),
                         #[watch]
-                        set_title: if model.rows.is_empty() { "Регионов пока нет" } else { "Выберите регион" },
-                        set_description: Some("Здесь меняется скорость региона. Изменения сразу сохраняются и применяются при экспорте."),
+                        set_title: if model.rows.is_empty() { tr("Регионов пока нет", "No regions yet") } else { tr("Выберите регион", "Pick a region") },
+                        set_description: Some(tr("Здесь меняется скорость региона. Изменения сразу сохраняются и применяются при экспорте.", "Speed and cutting of a region. Changes are saved right away and applied on export.")),
                     },
 
                     add_named[Some("edit")] = &gtk::ScrolledWindow {
@@ -149,7 +150,7 @@ impl SimpleComponent for Processing {
                             },
                             gtk::Button {
                                 set_icon_name: "edit-undo-symbolic",
-                                set_tooltip_text: Some("Отменить (Ctrl+Z)"),
+                                set_tooltip_text: Some(tr("Отменить (Ctrl+Z)", "Undo (Ctrl+Z)")),
                                 add_css_class: "flat",
                                 #[watch]
                                 set_sensitive: model.history.can_undo(),
@@ -157,7 +158,7 @@ impl SimpleComponent for Processing {
                             },
                             gtk::Button {
                                 set_icon_name: "edit-redo-symbolic",
-                                set_tooltip_text: Some("Повторить (Ctrl+Shift+Z)"),
+                                set_tooltip_text: Some(tr("Повторить (Ctrl+Shift+Z)", "Redo (Ctrl+Shift+Z)")),
                                 add_css_class: "flat",
                                 #[watch]
                                 set_sensitive: model.history.can_redo(),
@@ -166,7 +167,7 @@ impl SimpleComponent for Processing {
                         },
 
                         adw::PreferencesGroup {
-                            set_title: "Скорость",
+                            set_title: tr("Скорость", "Speed"),
 
                             gtk::Box {
                                 set_orientation: gtk::Orientation::Vertical,
@@ -195,7 +196,7 @@ impl SimpleComponent for Processing {
                                     set_spacing: 12,
                                     append: &model.keep_pitch,
                                     gtk::Label {
-                                        set_label: "Сохранять тон",
+                                        set_label: tr("Сохранять тон", "Keep pitch"),
                                         set_xalign: 0.0,
                                     },
                                     gtk::Label {
@@ -212,8 +213,8 @@ impl SimpleComponent for Processing {
                         },
 
                         adw::PreferencesGroup {
-                            set_title: "Нарезка и склейка",
-                            set_description: Some("Лента результата: части подряд, по очереди сверху и снизу. Щелчок — курсор и выбор части; выбранную тяните за середину (наложение на предыдущую или пауза), за края (подрезка), за кружки сверху (фейды), Delete — убрать. Ctrl+колесо — масштаб, колесо или перетаскивание пустого места — прокрутка, двойной щелчок — всё."),
+                            set_title: tr("Нарезка и склейка", "Cut and splice"),
+                            set_description: Some(tr("Лента результата: части подряд, по очереди сверху и снизу. Щелчок — курсор и выбор части; выбранную тяните за середину (наложение на предыдущую или пауза), за края (подрезка), за кружки сверху (фейды), Delete — убрать. Ctrl+колесо — масштаб, колесо или перетаскивание пустого места — прокрутка, двойной щелчок — всё.", "The result timeline: parts in a row, alternating top and bottom. Click — cursor and pick a part; drag the picked part by its middle (overlap the previous one or leave a pause), by its edges (trim), by the top circles (fades); Delete removes it. Ctrl+wheel — zoom, wheel or dragging empty space — scroll, double click — everything.")),
 
                             gtk::Box {
                                 set_orientation: gtk::Orientation::Vertical,
@@ -225,16 +226,16 @@ impl SimpleComponent for Processing {
                                 gtk::Box {
                                     set_spacing: 8,
                                     gtk::Button {
-                                        set_label: "Разрезать в курсоре",
+                                        set_label: tr("Разрезать в курсоре", "Cut at cursor"),
                                         set_icon_name: "edit-cut-symbolic",
-                                        set_tooltip_text: Some("Разрезать часть в позиции курсора"),
+                                        set_tooltip_text: Some(tr("Разрезать часть в позиции курсора", "Cut the part at the cursor")),
                                         connect_clicked => ProcessingMsg::Cut,
                                     },
                                     gtk::Button {
-                                        set_label: "Сбросить",
+                                        set_label: tr("Сбросить", "Reset"),
                                         #[watch]
                                         set_sensitive: model.region().is_some_and(|r| r.is_edited()),
-                                        set_tooltip_text: Some("Снова весь регион, без фейдов"),
+                                        set_tooltip_text: Some(tr("Снова весь регион, без фейдов", "The whole region again, no fades")),
                                         connect_clicked => ProcessingMsg::ResetParts,
                                     },
                                 },
@@ -255,7 +256,7 @@ impl SimpleComponent for Processing {
                             set_spacing: 8,
                             gtk::Button {
                                 #[watch]
-                                set_label: if model.playing == Some(Playing::Original) { "■ Оригинал" } else { "▶ Оригинал" },
+                                set_label: if model.playing == Some(Playing::Original) { tr("■ Оригинал", "■ Original") } else { tr("▶ Оригинал", "▶ Original") },
                                 #[watch]
                                 set_sensitive: model.player.is_some(),
                                 connect_clicked => ProcessingMsg::PlayOriginal,
@@ -263,7 +264,7 @@ impl SimpleComponent for Processing {
                             gtk::Button {
                                 add_css_class: "suggested-action",
                                 #[watch]
-                                set_label: if model.playing == Some(Playing::Result) { "■ Результат" } else { "▶ Результат" },
+                                set_label: if model.playing == Some(Playing::Result) { tr("■ Результат", "■ Result") } else { tr("▶ Результат", "▶ Result") },
                                 #[watch]
                                 set_sensitive: model.player.is_some() && !model.busy,
                                 connect_clicked => ProcessingMsg::PlayResult,
@@ -477,7 +478,10 @@ impl SimpleComponent for Processing {
             ProcessingMsg::Refresh => {
                 match self.library.all_regions() {
                     Ok(rows) => self.rows = rows,
-                    Err(err) => self.toast(&format!("Не удалось прочитать регионы: {err:#}")),
+                    Err(err) => self.toast(&format!(
+                        "{}: {err:#}",
+                        tr("Не удалось прочитать регионы", "Could not read the regions")
+                    )),
                 }
                 if self.region().is_none() {
                     self.selected = None;
@@ -493,7 +497,10 @@ impl SimpleComponent for Processing {
                         self.wave_state.borrow_mut().selected = None;
                         sender.input(ProcessingMsg::RemovePart(i));
                     }
-                    None => self.toast("Выберите часть на ленте щелчком"),
+                    None => self.toast(tr(
+                        "Выберите часть на ленте щелчком",
+                        "Click a part on the timeline first",
+                    )),
                 }
             }
             ProcessingMsg::Synced => {
@@ -516,7 +523,10 @@ impl SimpleComponent for Processing {
             }
             ProcessingMsg::Cut => {
                 let Some(at) = self.wave_state.borrow().cursor else {
-                    self.toast("Сначала щёлкните по ленте, где резать");
+                    self.toast(tr(
+                        "Сначала щёлкните по ленте, где резать",
+                        "Click on the timeline where to cut first",
+                    ));
                     return;
                 };
                 let mut done = false;
@@ -526,7 +536,10 @@ impl SimpleComponent for Processing {
                     }
                 });
                 if !done {
-                    self.toast("Под курсором нет части или это её край");
+                    self.toast(tr(
+                        "Под курсором нет части или это её край",
+                        "No part under the cursor, or it is an edge",
+                    ));
                 }
             }
             ProcessingMsg::ReplacePart(i, part) => self.edit(|r| {
@@ -565,12 +578,15 @@ impl SimpleComponent for Processing {
                         self.rebuild_list_badges();
                     }
                     Ok(None) => {}
-                    Err(err) => self.toast(&format!("Не удалось: {err:#}")),
+                    Err(err) => self.toast(&format!("{}: {err:#}", tr("Не удалось", "Failed"))),
                 }
             }
             ProcessingMsg::RemovePart(i) => {
                 if self.region().is_some_and(|r| r.effective_parts().len() < 2) {
-                    self.toast("Последнюю часть удалить нельзя");
+                    self.toast(tr(
+                        "Последнюю часть удалить нельзя",
+                        "The last part cannot be removed",
+                    ));
                     return;
                 }
                 self.edit(|r| {
@@ -612,7 +628,10 @@ impl SimpleComponent for Processing {
                             self.watch_end(&sender);
                         }
                     }
-                    Err(err) => self.toast(&format!("Не удалось обработать: {err}")),
+                    Err(err) => self.toast(&format!(
+                        "{}: {err}",
+                        tr("Не удалось обработать", "Could not process")
+                    )),
                 }
             }
             ProcessingMsg::Stopped => self.playing = None,
@@ -641,7 +660,7 @@ impl Processing {
     fn title(&self) -> String {
         match self.region() {
             Some(r) if !r.name.is_empty() => r.name.clone(),
-            Some(_) => "без имени".into(),
+            Some(_) => tr("без имени", "untitled").into(),
             None => String::new(),
         }
     }
@@ -658,10 +677,14 @@ impl Processing {
 
     fn mode_hint(&self) -> &'static str {
         match self.region() {
-            Some(r) if r.keep_pitch => {
-                "меняется только темп; на сильных значениях возможен «эффект эха»"
-            }
-            Some(_) => "как пластинка: быстрее — выше, медленнее — ниже",
+            Some(r) if r.keep_pitch => tr(
+                "меняется только темп; на сильных значениях возможен «эффект эха»",
+                "only the tempo changes; strong values may sound a little echoey",
+            ),
+            Some(_) => tr(
+                "как пластинка: быстрее — выше, медленнее — ниже",
+                "like a record: faster is higher, slower is lower",
+            ),
             None => "",
         }
     }
@@ -674,9 +697,9 @@ impl Processing {
         let before = r.len() as f64 / rate;
         let after = r.output_len() as f64 / rate;
         if r.is_processed() {
-            format!("{:.2} с → {:.2} с", before, after)
+            format!("{:.2} {s} → {:.2} {s}", before, after, s = sec())
         } else {
-            format!("{:.2} с", before)
+            format!("{:.2} {}", before, sec())
         }
     }
 
@@ -697,7 +720,7 @@ impl Processing {
             text.append(
                 &gtk::Label::builder()
                     .label(if r.name.is_empty() {
-                        "без имени"
+                        tr("без имени", "untitled")
                     } else {
                         &r.name
                     })
@@ -809,12 +832,15 @@ impl Processing {
             row.append(
                 &gtk::Label::builder()
                     .label(format!(
-                        "в {}  ·  {:.2} с",
+                        "{} {}  ·  {:.2} {}",
+                        tr("в", "at"),
                         format_time(starts[i] as f64 / rate, true),
-                        p.len() as f64 / rate
+                        p.len() as f64 / rate,
+                        sec()
                     ))
                     .tooltip_text(format!(
-                        "из записи: {}–{}",
+                        "{}: {}–{}",
+                        tr("из записи", "from the recording"),
                         format_time((p.start - r.start) as f64 / rate, true),
                         format_time((p.end - r.start) as f64 / rate, true),
                     ))
@@ -841,10 +867,11 @@ impl Processing {
                 let overlap = gtk::SpinButton::with_range(-5000.0, 5000.0, 10.0);
                 overlap.set_value((p.overlap as f64 * 1000.0 / rate).round());
                 overlap.set_width_chars(5);
-                overlap.set_tooltip_text(Some(
+                overlap.set_tooltip_text(Some(tr(
                     "Наложение на предыдущую часть, мс; меньше нуля — пауза",
-                ));
-                row.append(&gtk::Label::new(Some("наложение")));
+                    "Overlap with the previous part, ms; below zero is a pause",
+                )));
+                row.append(&gtk::Label::new(Some(tr("наложение", "overlap"))));
                 row.append(&overlap);
                 let s = self.sender_for_parts();
                 overlap.connect_value_changed(move |o| {
@@ -853,7 +880,7 @@ impl Processing {
             }
             row.append(
                 &gtk::Label::builder()
-                    .label("мс")
+                    .label(tr("мс", "ms"))
                     .css_classes(["dim-label"])
                     .build(),
             );
@@ -878,18 +905,21 @@ impl Processing {
                 b.connect_clicked(move |_| s.emit(msg(i)));
                 b
             };
-            row.append(&button("go-up-symbolic", "Раньше", i > 0, |i| {
-                ProcessingMsg::MovePart(i, true)
-            }));
+            row.append(&button(
+                "go-up-symbolic",
+                tr("Раньше", "Earlier"),
+                i > 0,
+                |i| ProcessingMsg::MovePart(i, true),
+            ));
             row.append(&button(
                 "go-down-symbolic",
-                "Позже",
+                tr("Позже", "Later"),
                 i + 1 < count,
                 |i| ProcessingMsg::MovePart(i, false),
             ));
             row.append(&button(
                 "user-trash-symbolic",
-                "Убрать часть",
+                tr("Убрать часть", "Remove part"),
                 count > 1,
                 ProcessingMsg::RemovePart,
             ));
@@ -915,7 +945,10 @@ impl Processing {
         let saved = self.history.apply(&*self.library, before, region.clone());
         self.generation += 1;
         if let Err(err) = saved {
-            self.toast(&format!("Не удалось сохранить: {err:#}"));
+            self.toast(&format!(
+                "{}: {err:#}",
+                tr("Не удалось сохранить", "Could not save")
+            ));
         }
         // The old preview no longer matches the settings.
         if self.playing == Some(Playing::Result) {
@@ -970,7 +1003,10 @@ impl Processing {
             return;
         };
         if !file.path.exists() {
-            self.toast("Нет доступа к записи. Подключите рекордер");
+            self.toast(tr(
+                "Нет доступа к записи. Подключите рекордер",
+                "The recording is not available. Connect the recorder",
+            ));
             return;
         }
         self.busy = true;

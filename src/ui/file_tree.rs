@@ -16,6 +16,7 @@ use relm4::gtk::{self, gio, glib, prelude::*};
 use relm4::{ComponentParts, ComponentSender, SimpleComponent};
 
 use crate::audio;
+use crate::lang::tr;
 use crate::store::{FileSummary, Library};
 
 const ATTRIBUTES: &str = "standard::name,standard::display-name,standard::type,\
@@ -75,11 +76,11 @@ impl Badges {
         let mut tip = Vec::new();
         if regions > 0 {
             text.push(regions.to_string());
-            tip.push(format!("регионов: {regions}"));
+            tip.push(format!("{}: {regions}", tr("регионов", "regions")));
         }
         if reviewed {
             text.push("✓".to_string());
-            tip.push("просмотрен".to_string());
+            tip.push(tr("просмотрен", "reviewed").to_string());
         }
         label.set_label(&text.join(" "));
         label.set_tooltip_text((!tip.is_empty()).then(|| tip.join(", ")).as_deref());

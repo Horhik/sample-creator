@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'home.dart';
 import 'src/rust/api/engine.dart' as engine;
 import 'src/rust/frb_generated.dart';
+import 'l10n.dart';
 
 void main() => runApp(const SampleCreatorApp());
 
@@ -18,6 +19,7 @@ Future<void> _startEngine() async {
   final data = await getApplicationSupportDirectory();
   final cache = await getApplicationCacheDirectory();
   await engine.init(dataDir: data.path, cacheDir: cache.path);
+  loadLanguage();
 }
 
 final _engineReady = _startEngine();
@@ -31,38 +33,43 @@ class SampleCreatorApp extends StatelessWidget {
   /// the wallpaper where Android offers them (12+).
   @override
   Widget build(BuildContext context) {
-    return DynamicColorBuilder(
-      builder: (light, dark) => MaterialApp(
-        title: 'Sample Creator',
-        debugShowCheckedModeBanner: false,
-        themeMode: ThemeMode.system,
-        theme: ThemeData(
-          colorScheme:
-              light?.harmonized() ?? ColorScheme.fromSeed(seedColor: _seed),
-          useMaterial3: true,
-        ),
-        darkTheme: ThemeData(
-          colorScheme:
-              dark?.harmonized() ??
-              ColorScheme.fromSeed(
-                seedColor: _seed,
-                brightness: Brightness.dark,
-              ),
-          useMaterial3: true,
-        ),
-        home: FutureBuilder(
-          future: _engineReady,
-          builder: (context, snap) {
-            if (snap.hasError) {
-              return _Failure("${snap.error}\n\n${snap.stackTrace}");
-            }
-            if (snap.connectionState != ConnectionState.done) {
-              return const Scaffold(
-                body: Center(child: CircularProgressIndicator()),
-              );
-            }
-            return const StorageGate();
-          },
+    // Rebuilt when the language changes, so every label follows.
+    return ValueListenableBuilder(
+      valueListenable: language,
+      builder: (context, _, _) => DynamicColorBuilder(
+        builder: (light, dark) => MaterialApp(
+          key: ValueKey(isRussian),
+          title: 'Sample Creator',
+          debugShowCheckedModeBanner: false,
+          themeMode: ThemeMode.system,
+          theme: ThemeData(
+            colorScheme:
+                light?.harmonized() ?? ColorScheme.fromSeed(seedColor: _seed),
+            useMaterial3: true,
+          ),
+          darkTheme: ThemeData(
+            colorScheme:
+                dark?.harmonized() ??
+                ColorScheme.fromSeed(
+                  seedColor: _seed,
+                  brightness: Brightness.dark,
+                ),
+            useMaterial3: true,
+          ),
+          home: FutureBuilder(
+            future: _engineReady,
+            builder: (context, snap) {
+              if (snap.hasError) {
+                return _Failure("${snap.error}\n\n${snap.stackTrace}");
+              }
+              if (snap.connectionState != ConnectionState.done) {
+                return const Scaffold(
+                  body: Center(child: CircularProgressIndicator()),
+                );
+              }
+              return const StorageGate();
+            },
+          ),
         ),
       ),
     );
@@ -127,15 +134,18 @@ class _StorageGateState extends State<StorageGate> with WidgetsBindingObserver {
                 children: [
                   const Icon(Icons.folder_off_outlined, size: 64),
                   const SizedBox(height: 16),
-                  const Text(
-                    'Нужен доступ к файлам, чтобы открывать записи с телефона '
-                    'и с рекордера. Приложение только читает их.',
+                  Text(
+                    tr(
+                      'Нужен доступ к файлам, чтобы открывать записи с телефона '
+                          'и с рекордера. Приложение только читает их.',
+                      'File access is needed to open recordings on the phone and on a recorder. The app only reads them.',
+                    ),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 24),
                   FilledButton(
                     onPressed: _request,
-                    child: const Text('Разрешить'),
+                    child: Text(tr('Разрешить', 'Allow')),
                   ),
                 ],
               ),
@@ -156,7 +166,9 @@ class _Failure extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Не удалось запустить')),
+      appBar: AppBar(
+        title: Text(tr('Не удалось запустить', 'Could not start')),
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: SelectableText(

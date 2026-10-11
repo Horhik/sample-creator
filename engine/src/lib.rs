@@ -6,6 +6,7 @@ pub mod audio;
 pub mod core;
 pub mod dsp;
 pub mod export;
+pub mod lang;
 pub mod recording;
 pub mod store;
 pub mod sync;

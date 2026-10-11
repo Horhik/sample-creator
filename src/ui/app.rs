@@ -14,6 +14,7 @@ use super::processing::{Processing, ProcessingMsg};
 use super::review::{Review, ReviewMsg, ReviewOutput};
 use crate::audio::player::Player;
 use crate::core::{Id, Item};
+use crate::lang::{self, tr};
 use crate::store::Library;
 use crate::sync;
 
@@ -51,6 +52,8 @@ pub enum AppMsg {
     },
     SyncNow,
     DisableSync,
+    /// 0 = the system's language, 1 = English, 2 = Russian.
+    Language(u32),
 }
 
 #[relm4::component(pub)]
@@ -71,13 +74,49 @@ impl SimpleComponent for App {
                 add_top_bar = &adw::HeaderBar {
                     pack_start = &gtk::Button {
                         set_icon_name: "folder-open-symbolic",
-                        set_tooltip_text: Some("Открыть папку"),
+                        set_tooltip_text: Some(tr("Открыть папку", "Open folder")),
                         connect_clicked => AppMsg::ChooseRoot,
                     },
 
                     pack_end = &gtk::MenuButton {
+                        set_icon_name: "open-menu-symbolic",
+                        set_tooltip_text: Some(tr("Настройки", "Settings")),
+                        #[wrap(Some)]
+                        set_popover = &gtk::Popover {
+                            gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_spacing: 8,
+                                set_margin_all: 8,
+
+                                gtk::Label {
+                                    set_label: tr("Язык интерфейса", "Interface language"),
+                                    add_css_class: "heading",
+                                    set_xalign: 0.0,
+                                },
+                                #[name = "language"]
+                                gtk::DropDown::from_strings(&[
+                                    tr("Как в системе", "System"),
+                                    "English",
+                                    "Русский",
+                                ]) {
+                                    set_selected: language_index(&model.library),
+                                },
+                                gtk::Label {
+                                    set_label: tr(
+                                        "Применится после перезапуска",
+                                        "Takes effect after a restart",
+                                    ),
+                                    add_css_class: "dim-label",
+                                    add_css_class: "caption",
+                                    set_xalign: 0.0,
+                                },
+                            },
+                        },
+                    },
+
+                    pack_end = &gtk::MenuButton {
                         set_icon_name: "emblem-synchronizing-symbolic",
-                        set_tooltip_text: Some("Разметка на носителе"),
+                        set_tooltip_text: Some(tr("Разметка на носителе", "Markup on the volume")),
                         #[wrap(Some)]
                         set_popover = &gtk::Popover {
                             gtk::Box {
@@ -87,7 +126,7 @@ impl SimpleComponent for App {
                                 set_width_request: 320,
 
                                 gtk::Label {
-                                    set_label: "Файл разметки на носителе",
+                                    set_label: tr("Файл разметки на носителе", "Markup file on the volume"),
                                     add_css_class: "heading",
                                     set_xalign: 0.0,
                                 },
@@ -100,32 +139,32 @@ impl SimpleComponent for App {
                                     add_css_class: "dim-label",
                                 },
                                 gtk::Button {
-                                    set_label: "Создать в корне папки",
+                                    set_label: tr("Создать в корне папки", "Create in the folder root"),
                                     #[watch]
                                     set_visible: !model.sync_enabled(),
                                     connect_clicked => AppMsg::CreateStateFile { here: true },
                                 },
                                 gtk::Button {
-                                    set_label: "Создать в папке…",
+                                    set_label: tr("Создать в папке…", "Create in a folder…"),
                                     #[watch]
                                     set_visible: !model.sync_enabled(),
                                     connect_clicked => AppMsg::CreateStateFile { here: false },
                                 },
                                 gtk::Button {
-                                    set_label: "Указать существующий…",
+                                    set_label: tr("Указать существующий…", "Use an existing one…"),
                                     #[watch]
                                     set_visible: !model.sync_enabled(),
                                     connect_clicked => AppMsg::FindStateFile,
                                 },
                                 gtk::Button {
-                                    set_label: "Синхронизировать сейчас",
+                                    set_label: tr("Синхронизировать сейчас", "Sync now"),
                                     add_css_class: "suggested-action",
                                     #[watch]
                                     set_visible: model.sync_enabled(),
                                     connect_clicked => AppMsg::SyncNow,
                                 },
                                 gtk::Button {
-                                    set_label: "Отключить",
+                                    set_label: tr("Отключить", "Turn off"),
                                     add_css_class: "flat",
                                     #[watch]
                                     set_visible: model.sync_enabled(),
@@ -144,7 +183,7 @@ impl SimpleComponent for App {
 
                 #[name = "view_stack"]
                 adw::ViewStack {
-                    add_titled_with_icon[Some("markup"), "Разметка", "document-edit-symbolic"] = &gtk::Paned {
+                    add_titled_with_icon[Some("markup"), tr("Разметка", "Markup"), "document-edit-symbolic"] = &gtk::Paned {
                         set_orientation: gtk::Orientation::Horizontal,
                         set_position: 280,
                         set_resize_start_child: false,
@@ -176,8 +215,8 @@ impl SimpleComponent for App {
                         set_end_child: Some(model.editor.widget()),
                     },
 
-                    add_titled_with_icon[Some("review"), "Обзор регионов", "view-list-symbolic"] = model.review.widget(),
-                    add_titled_with_icon[Some("processing"), "Обработка", "preferences-system-symbolic"] = model.processing.widget(),
+                    add_titled_with_icon[Some("review"), tr("Обзор регионов", "Region review"), "view-list-symbolic"] = model.review.widget(),
+                    add_titled_with_icon[Some("processing"), tr("Обработка", "Processing"), "preferences-system-symbolic"] = model.processing.widget(),
                 },
             },
         }
@@ -201,6 +240,12 @@ impl SimpleComponent for App {
             eprintln!("cannot open the markup library, keeping it in memory: {err:#}");
             Library::open_in_memory().expect("in-memory SQLite")
         }));
+        // Before any widget is built: every label reads the language once.
+        lang::set_russian(match library.setting("language").as_deref() {
+            Some("ru") => true,
+            Some("en") => false,
+            _ => lang::system_is_russian(),
+        });
 
         let file_tree = FileTree::builder()
             .launch((root_dir.clone(), library.clone()))
@@ -280,6 +325,10 @@ impl SimpleComponent for App {
             model.review.sender().clone(),
             model.processing.sender().clone(),
         ));
+        let s = sender.clone();
+        widgets
+            .language
+            .connect_selected_notify(move |d| s.input(AppMsg::Language(d.selected())));
         // Closing the window writes the markup out to volumes that keep it.
         let lib = model.library.clone();
         window.connect_close_request(move |_| {
@@ -302,7 +351,7 @@ impl SimpleComponent for App {
         match msg {
             AppMsg::ChooseRoot => {
                 let dialog = gtk::FileDialog::builder()
-                    .title("Папка с записями")
+                    .title(tr("Папка с записями", "Folder with recordings"))
                     .initial_folder(&gio::File::for_path(&self.root))
                     .build();
                 dialog.select_folder(Some(&self.window), gio::Cancellable::NONE, move |result| {
@@ -329,10 +378,18 @@ impl SimpleComponent for App {
                 });
             }
             AppMsg::CreateStateFile { here: false } => {
-                self.pick_folder("Где хранить файл разметки", false, &sender);
+                self.pick_folder(
+                    tr("Где хранить файл разметки", "Where to keep the markup file"),
+                    false,
+                    &sender,
+                );
             }
             AppMsg::FindStateFile => {
-                self.pick_folder(&format!("Папка с {}", sync::FILE_NAME), true, &sender);
+                self.pick_folder(
+                    &format!("{} {}", tr("Папка с", "Folder with"), sync::FILE_NAME),
+                    true,
+                    &sender,
+                );
             }
             AppMsg::StateFileFolder {
                 location,
@@ -345,11 +402,25 @@ impl SimpleComponent for App {
                 let result = sync::sync_target(&self.library, &self.root);
                 self.after_sync(result, &sender);
             }
+            AppMsg::Language(i) => {
+                let value = match i {
+                    1 => "en",
+                    2 => "ru",
+                    _ => "system",
+                };
+                if let Err(err) = self.library.set_setting("language", value) {
+                    eprintln!("language: {err:#}");
+                }
+            }
             AppMsg::DisableSync => {
                 if let Err(err) = sync::disable(&self.library, &self.root) {
-                    self.sync_status = format!("Не удалось: {err:#}");
+                    self.sync_status = format!("{}: {err:#}", tr("Не удалось", "Failed"));
                 } else {
-                    self.sync_status = "Отключено; файл остался на носителе".into();
+                    self.sync_status = tr(
+                        "Отключено; файл остался на носителе",
+                        "Turned off; the file stays on the volume",
+                    )
+                    .into();
                 }
             }
             AppMsg::FileChanged(path) => self.file_tree.emit(FileTreeInput::Refresh(path)),
@@ -375,7 +446,11 @@ impl App {
                  окна. Побеждает более поздняя правка каждой записи.",
                 sync::FILE_NAME
             ),
-            Some(t) if !t.available() => format!("{}\nноситель не подключён", t.file().display()),
+            Some(t) if !t.available() => format!(
+                "{}\n{}",
+                t.file().display(),
+                tr("носитель не подключён", "volume not connected")
+            ),
             Some(t) => format!("{}", t.file().display()),
         };
         if self.sync_status.is_empty() {
@@ -417,8 +492,14 @@ impl App {
         match result {
             Ok(r) => {
                 self.sync_status = format!(
-                    "Синхронизировано: с носителя записей — {}, на носитель — {}",
-                    r.imported, r.exported
+                    "{} {}, {} {}",
+                    tr(
+                        "Синхронизировано: с носителя записей —",
+                        "Synced: recordings from the volume —"
+                    ),
+                    r.imported,
+                    tr("на носитель —", "to the volume —"),
+                    r.exported
                 );
                 if r.imported > 0 {
                     // Regions were replaced: show what is stored now.
@@ -433,9 +514,18 @@ impl App {
             }
             Err(err) => {
                 eprintln!("sync: {err:#}");
-                self.sync_status = format!("Не удалось: {err:#}");
+                self.sync_status = format!("{}: {err:#}", tr("Не удалось", "Failed"));
             }
         }
+    }
+}
+
+/// Position of the saved language choice in the settings drop-down.
+fn language_index(library: &Library) -> u32 {
+    match library.setting("language").as_deref() {
+        Some("en") => 1,
+        Some("ru") => 2,
+        _ => 0,
     }
 }
 

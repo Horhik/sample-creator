@@ -18,6 +18,7 @@ use crate::audio::peaks::{self, PeakJob};
 use crate::audio::player::Player;
 use crate::core::history::{Change, History};
 use crate::core::{ChannelMode, ColorIdx, Id, Item, Marker, Markup, PALETTE, Region};
+use crate::lang::{sec, tr};
 use crate::recording;
 use crate::store::{FileRecord, Library};
 
@@ -120,13 +121,13 @@ impl SimpleComponent for Editor {
 
             add_named[Some("empty")] = &adw::StatusPage {
                 set_icon_name: Some("audio-x-generic-symbolic"),
-                set_title: "Файл не выбран",
-                set_description: Some("Выберите запись слева"),
+                set_title: tr("Файл не выбран", "No file selected"),
+                set_description: Some(tr("Выберите запись слева", "Pick a recording on the left")),
             },
 
             add_named[Some("error")] = &adw::StatusPage {
                 set_icon_name: Some("dialog-warning-symbolic"),
-                set_title: "Не удалось открыть файл",
+                set_title: tr("Не удалось открыть файл", "Cannot open the file"),
                 #[watch]
                 set_description: model.error.as_deref(),
             },
@@ -161,8 +162,8 @@ impl SimpleComponent for Editor {
                                 set_label: &model.file_details(),
                             },
                             gtk::ToggleButton {
-                                set_label: "Просмотрен",
-                                set_tooltip_text: Some("Отметить запись как разобранную"),
+                                set_label: tr("Просмотрен", "Reviewed"),
+                                set_tooltip_text: Some(tr("Отметить запись как разобранную", "Mark the recording as reviewed")),
                                 add_css_class: "flat",
                                 #[watch]
                                 #[block_signal(reviewed_toggled)]
@@ -180,14 +181,14 @@ impl SimpleComponent for Editor {
 
                             gtk::Button {
                                 set_icon_name: "media-skip-backward-symbolic",
-                                set_tooltip_text: Some("В начало (Home)"),
+                                set_tooltip_text: Some(tr("В начало (Home)", "To start (Home)")),
                                 add_css_class: "flat",
                                 connect_clicked => EditorMsg::ToStart,
                             },
                             #[name = "play_button"]
                             gtk::Button {
                                 set_icon_name: "media-playback-start-symbolic",
-                                set_tooltip_text: Some("Воспроизвести / пауза (Space)"),
+                                set_tooltip_text: Some(tr("Воспроизвести / пауза (Space)", "Play / pause (Space)")),
                                 add_css_class: "circular",
                                 add_css_class: "suggested-action",
                                 #[watch]
@@ -216,19 +217,19 @@ impl SimpleComponent for Editor {
                             },
                             gtk::Button {
                                 set_icon_name: "zoom-out-symbolic",
-                                set_tooltip_text: Some("Отдалить (−)"),
+                                set_tooltip_text: Some(tr("Отдалить (−)", "Zoom out (−)")),
                                 add_css_class: "flat",
                                 connect_clicked => EditorMsg::ZoomOut,
                             },
                             gtk::Button {
                                 set_icon_name: "zoom-fit-best-symbolic",
-                                set_tooltip_text: Some("Весь файл (0)"),
+                                set_tooltip_text: Some(tr("Весь файл (0)", "Whole file (0)")),
                                 add_css_class: "flat",
                                 connect_clicked => EditorMsg::ZoomFit,
                             },
                             gtk::Button {
                                 set_icon_name: "zoom-in-symbolic",
-                                set_tooltip_text: Some("Приблизить (+)"),
+                                set_tooltip_text: Some(tr("Приблизить (+)", "Zoom in (+)")),
                                 add_css_class: "flat",
                                 connect_clicked => EditorMsg::ZoomIn,
                             },
@@ -307,7 +308,10 @@ impl SimpleComponent for Editor {
             help: help_button(),
             title: gtk::EditableLabel::builder()
                 .css_classes(["title-4"])
-                .tooltip_text("Нажмите, чтобы дать записи своё имя")
+                .tooltip_text(tr(
+                    "Нажмите, чтобы дать записи своё имя",
+                    "Click to give the recording a name of your own",
+                ))
                 .build(),
         };
         let widgets = view_output!();
@@ -439,7 +443,10 @@ impl SimpleComponent for Editor {
                             f.record.reviewed = reviewed;
                             sender.output(EditorOutput::Changed(f.path.clone())).ok();
                         }
-                        Err(err) => self.toast(&format!("Не удалось сохранить: {err:#}")),
+                        Err(err) => self.toast(&format!(
+                            "{}: {err:#}",
+                            tr("Не удалось сохранить", "Could not save")
+                        )),
                     }
                 }
                 false
@@ -497,7 +504,11 @@ impl Editor {
             waveform.update(pos, playing);
 
             let status = match waveform.analysis_progress() {
-                Some(p) if p < 1.0 => format!("анализ волны {:.0}%", p * 100.0),
+                Some(p) if p < 1.0 => format!(
+                    "{} {:.0}%",
+                    tr("анализ волны", "analysing the waveform"),
+                    p * 100.0
+                ),
                 _ => String::new(),
             };
             let (rate, total) = waveform.timing();
@@ -634,7 +645,10 @@ impl Editor {
                 true
             }
             Err(err) => {
-                self.toast(&format!("Не удалось сохранить: {err:#}"));
+                self.toast(&format!(
+                    "{}: {err:#}",
+                    tr("Не удалось сохранить", "Could not save")
+                ));
                 false
             }
         }
@@ -833,13 +847,19 @@ impl Editor {
     fn make_region(&mut self) -> bool {
         let Some(f) = &self.file else { return false };
         let Some((start, end)) = self.selection.filter(|(a, b)| b > a) else {
-            self.toast("Сначала выделите участок мышью или клавишами I и O");
+            self.toast(tr(
+                "Сначала выделите участок мышью или клавишами I и O",
+                "Select a stretch first: drag with the mouse or use I and O",
+            ));
             return false;
         };
         // I and O pressed at almost the same moment make a useless sliver.
         let min_len = u64::from(f.info.sample_rate) / 100;
         if end - start < min_len {
-            self.toast("Участок короче 10 мс — растяните выделение");
+            self.toast(tr(
+                "Участок короче 10 мс — растяните выделение",
+                "Shorter than 10 ms — make the selection longer",
+            ));
             return false;
         }
         let region = Region {
@@ -965,9 +985,15 @@ impl Editor {
     fn toggle_loop(&mut self) {
         self.auto_loop = !self.auto_loop;
         self.toast(if self.auto_loop {
-            "Цикл включён: выделение и выбранный регион повторяются"
+            tr(
+                "Цикл включён: выделение и выбранный регион повторяются",
+                "Loop on: the selection and the selected region repeat",
+            )
         } else {
-            "Цикл выключен: воспроизведение идёт дальше"
+            tr(
+                "Цикл выключен: воспроизведение идёт дальше",
+                "Loop off: playback goes on",
+            )
         });
     }
 
@@ -995,7 +1021,10 @@ impl Editor {
                 changed
             }
             Err(err) => {
-                self.toast(&format!("Не удалось отменить: {err:#}"));
+                self.toast(&format!(
+                    "{}: {err:#}",
+                    tr("Не удалось отменить", "Could not undo")
+                ));
                 false
             }
         }
@@ -1030,7 +1059,10 @@ impl Editor {
                     f.record.alias = alias;
                     sender.output(EditorOutput::Changed(f.path.clone())).ok();
                 }
-                Err(err) => self.toast(&format!("Не удалось сохранить имя: {err:#}")),
+                Err(err) => self.toast(&format!(
+                    "{}: {err:#}",
+                    tr("Не удалось сохранить имя", "Could not save the name")
+                )),
             }
         }
         // Clearing the alias shows the file name again.
@@ -1058,9 +1090,9 @@ impl Editor {
         };
         let i = &f.info;
         let channels = match i.channels {
-            1 => "моно".to_string(),
-            2 => "стерео".to_string(),
-            n => format!("{n} кан."),
+            1 => tr("моно", "mono").to_string(),
+            2 => tr("стерео", "stereo").to_string(),
+            n => format!("{n} {}", tr("кан.", "ch")),
         };
         let mut parts = Vec::new();
         if f.record.alias.is_some() {
@@ -1091,38 +1123,50 @@ impl Editor {
         }
         let hints: &[(&str, &str)] = if self.selection.is_some_and(|(a, b)| b > a) {
             &[
-                ("R", "регион из выделения"),
-                ("Shift+клик", "подрезать край"),
-                ("I / O", "край по плейхеду"),
-                ("1–8", "цвет нового региона"),
-                ("Esc", "снять выделение"),
+                ("R", tr("регион из выделения", "region from selection")),
+                (
+                    tr("Shift+клик", "Shift+click"),
+                    tr("подрезать край", "trim an edge"),
+                ),
+                ("I / O", tr("край по плейхеду", "edge at playhead")),
+                ("1–8", tr("цвет нового региона", "colour of the new region")),
+                ("Esc", tr("снять выделение", "clear selection")),
             ]
         } else if self.selected_region().is_some() {
             &[
-                ("Enter", "имя"),
-                ("1–8", "цвет"),
-                ("E", "экспорт"),
-                ("Shift+клик", "подрезать край"),
-                ("I / O", "край по плейхеду"),
-                ("Del", "удалить"),
-                ("Esc", "снять выбор"),
+                ("Enter", tr("имя", "name")),
+                ("1–8", tr("цвет", "colour")),
+                ("E", tr("экспорт", "export")),
+                (
+                    tr("Shift+клик", "Shift+click"),
+                    tr("подрезать край", "trim an edge"),
+                ),
+                ("I / O", tr("край по плейхеду", "edge at playhead")),
+                ("Del", tr("удалить", "delete")),
+                ("Esc", tr("снять выбор", "deselect")),
             ]
         } else if matches!(self.selected, Some(Item::Marker(_))) {
             &[
-                ("Enter", "имя"),
-                ("1–8", "цвет"),
-                ("тащите", "сдвинуть"),
-                ("Del", "удалить"),
-                ("Esc", "снять выбор"),
+                ("Enter", tr("имя", "name")),
+                ("1–8", tr("цвет", "colour")),
+                (tr("тащите", "drag"), tr("сдвинуть", "move")),
+                ("Del", tr("удалить", "delete")),
+                ("Esc", tr("снять выбор", "deselect")),
             ]
         } else {
             &[
-                ("Space", "играть"),
-                ("тащите мышью", "выделить"),
-                ("M", "маркер"),
-                ("I / O", "выделение по плейхеду"),
-                ("Tab", "следующий"),
-                ("правая кнопка", "все действия"),
+                ("Space", tr("играть", "play")),
+                (tr("тащите мышью", "drag"), tr("выделить", "select")),
+                ("M", tr("маркер", "marker")),
+                (
+                    "I / O",
+                    tr("выделение по плейхеду", "selection at playhead"),
+                ),
+                ("Tab", tr("следующий", "next")),
+                (
+                    tr("правая кнопка", "right click"),
+                    tr("все действия", "all actions"),
+                ),
             ]
         };
         let mut parts: Vec<String> = hints
@@ -1130,7 +1174,7 @@ impl Editor {
             .map(|(key, what)| format!("{}  {what}", kbd(key)))
             .collect();
         if !self.auto_loop {
-            parts.push(format!("{}  цикл выключен", kbd("L")));
+            parts.push(format!("{}  {}", kbd("L"), tr("цикл выключен", "loop off")));
         }
         parts.join("     ")
     }
@@ -1144,8 +1188,11 @@ impl Editor {
         }
         let rate = f64::from(f.info.sample_rate);
         format!(
-            "выделено {:.2} с — R: создать регион",
-            (b - a) as f64 / rate
+            "{} {:.2} {} — {}",
+            tr("выделено", "selected"),
+            (b - a) as f64 / rate,
+            sec(),
+            tr("R: создать регион", "R: make a region")
         )
     }
 }
@@ -1191,53 +1238,107 @@ fn kbd(key: &str) -> String {
     )
 }
 
-const ALL_KEYS: &[(&str, &[(&str, &str)])] = &[
-    (
-        "Прослушивание",
-        &[
-            ("Space", "воспроизвести / пауза"),
-            ("Home", "в начало"),
-            ("← / →", "назад / вперёд на 1 с (Shift — 10 с)"),
-            ("L", "зацикливать выделение и выбранный регион (вкл/выкл)"),
-            ("колесо", "прокрутка; Ctrl+колесо — зум"),
-            ("+ / − / 0", "приблизить / отдалить / весь файл"),
-        ],
-    ),
-    (
-        "Разметка",
-        &[
-            ("тащите мышью", "выделить участок"),
-            (
-                "Shift+клик",
-                "подрезать ближний к клику край выделения или региона",
-            ),
-            ("I / O", "начало / конец по плейхеду"),
-            ("R", "регион из выделения"),
-            ("M", "маркер у плейхеда"),
-            ("правая кнопка", "меню: маркер здесь, цвет и всё остальное"),
-        ],
-    ),
-    (
-        "Выбранный маркер или регион",
-        &[
-            ("клик", "выбрать; двойной клик — переименовать"),
-            ("Enter / F2", "переименовать"),
-            ("1–8", "цвет"),
-            ("E", "экспорт вкл/выкл"),
-            ("Del", "удалить"),
-            ("Tab / Shift+Tab", "следующий / предыдущий"),
-            ("Esc", "снять выделение и выбор"),
-        ],
-    ),
-    (
-        "Правка",
-        &[
-            ("Ctrl+Z", "отменить"),
-            ("Ctrl+Shift+Z / Ctrl+Y", "повторить"),
-            ("? / F1", "эта памятка"),
-        ],
-    ),
-];
+/// Every key, by section, in the interface language.
+fn all_keys() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
+    vec![
+        (
+            tr("Прослушивание", "Listening"),
+            vec![
+                ("Space", tr("воспроизвести / пауза", "play / pause")),
+                ("Home", tr("в начало", "to start")),
+                (
+                    "← / →",
+                    tr(
+                        "назад / вперёд на 1 с (Shift — 10 с)",
+                        "back / forward 1 s (Shift — 10 s)",
+                    ),
+                ),
+                (
+                    "L",
+                    tr(
+                        "зацикливать выделение и выбранный регион (вкл/выкл)",
+                        "loop the selection and the selected region (on/off)",
+                    ),
+                ),
+                (
+                    tr("колесо", "wheel"),
+                    tr("прокрутка; Ctrl+колесо — зум", "scroll; Ctrl+wheel — zoom"),
+                ),
+                (
+                    "+ / − / 0",
+                    tr(
+                        "приблизить / отдалить / весь файл",
+                        "zoom in / out / whole file",
+                    ),
+                ),
+            ],
+        ),
+        (
+            tr("Разметка", "Markup"),
+            vec![
+                (
+                    tr("тащите мышью", "drag"),
+                    tr("выделить участок", "select a stretch"),
+                ),
+                (
+                    tr("Shift+клик", "Shift+click"),
+                    tr(
+                        "подрезать ближний к клику край выделения или региона",
+                        "trim the edge of the selection or region nearest the click",
+                    ),
+                ),
+                (
+                    "I / O",
+                    tr("начало / конец по плейхеду", "start / end at playhead"),
+                ),
+                ("R", tr("регион из выделения", "region from selection")),
+                ("M", tr("маркер у плейхеда", "marker at playhead")),
+                (
+                    tr("правая кнопка", "right click"),
+                    tr(
+                        "меню: маркер здесь, цвет и всё остальное",
+                        "menu: marker here, colour and the rest",
+                    ),
+                ),
+            ],
+        ),
+        (
+            tr("Выбранный маркер или регион", "Selected marker or region"),
+            vec![
+                (
+                    tr("клик", "click"),
+                    tr(
+                        "выбрать; двойной клик — переименовать",
+                        "select; double click — rename",
+                    ),
+                ),
+                ("Enter / F2", tr("переименовать", "rename")),
+                ("1–8", tr("цвет", "colour")),
+                ("E", tr("экспорт вкл/выкл", "export on/off")),
+                ("Del", tr("удалить", "delete")),
+                (
+                    "Tab / Shift+Tab",
+                    tr("следующий / предыдущий", "next / previous"),
+                ),
+                (
+                    "Esc",
+                    tr(
+                        "снять выделение и выбор",
+                        "clear selection and selection of items",
+                    ),
+                ),
+            ],
+        ),
+        (
+            tr("Правка", "Edit"),
+            vec![
+                ("Ctrl+Z", tr("отменить", "undo")),
+                ("Ctrl+Shift+Z / Ctrl+Y", tr("повторить", "redo")),
+                ("? / F1", tr("эта памятка", "this sheet")),
+            ],
+        ),
+    ]
+}
 
 fn help_button() -> gtk::MenuButton {
     let grid = gtk::Grid::builder()
@@ -1249,21 +1350,21 @@ fn help_button() -> gtk::MenuButton {
         .margin_bottom(12)
         .build();
     let mut row = 0;
-    for (section, keys) in ALL_KEYS {
+    for (section, keys) in all_keys() {
         let title = gtk::Label::builder()
-            .label(*section)
+            .label(section)
             .xalign(0.0)
             .css_classes(["heading"])
             .margin_top(if row == 0 { 0 } else { 8 })
             .build();
         grid.attach(&title, 0, row, 2, 1);
         row += 1;
-        for (key, what) in *keys {
+        for (key, what) in keys {
             let cap = gtk::Label::builder().xalign(1.0).build();
             cap.set_markup(&kbd(key));
             grid.attach(&cap, 0, row, 1, 1);
             grid.attach(
-                &gtk::Label::builder().label(*what).xalign(0.0).build(),
+                &gtk::Label::builder().label(what).xalign(0.0).build(),
                 1,
                 row,
                 1,
@@ -1275,7 +1376,7 @@ fn help_button() -> gtk::MenuButton {
     let popover = gtk::Popover::builder().child(&grid).build();
     gtk::MenuButton::builder()
         .icon_name("help-about-symbolic")
-        .tooltip_text("Все клавиши (? или F1)")
+        .tooltip_text(tr("Все клавиши (? или F1)", "All keys (? or F1)"))
         .css_classes(["flat", "circular"])
         .popover(&popover)
         .build()

@@ -10,6 +10,7 @@ import 'browser.dart';
 import 'src/rust/api/engine.dart' as engine;
 import 'src/rust/api/review.dart' as api;
 import 'waveform.dart';
+import 'l10n.dart';
 
 /// All regions from all recordings, grouped by recording, with previews,
 /// export flags and the export itself. Mirrors the desktop review page.
@@ -131,7 +132,12 @@ class _ReviewPageState extends State<ReviewPage> {
       return;
     }
     if (!r.available) {
-      _toast('Запись недоступна. Подключите рекордер');
+      _toast(
+        tr(
+          'Запись недоступна. Подключите рекордер',
+          'The recording is not available. Connect the recorder',
+        ),
+      );
       return;
     }
     setState(() => _playing = r.id);
@@ -153,7 +159,7 @@ class _ReviewPageState extends State<ReviewPage> {
     final name = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Имя региона'),
+        title: Text(tr('Имя региона', 'Region name')),
         content: TextField(
           controller: controller,
           autofocus: true,
@@ -162,11 +168,11 @@ class _ReviewPageState extends State<ReviewPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена'),
+            child: Text(tr('Отмена', 'Cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, controller.text),
-            child: const Text('Сохранить'),
+            child: Text(tr('Сохранить', 'Save')),
           ),
         ],
       ),
@@ -179,19 +185,30 @@ class _ReviewPageState extends State<ReviewPage> {
   Future<void> _export() async {
     final ids = _toExport.map((r) => r.id).toList();
     if (ids.isEmpty) {
-      _toast('Нет регионов, отмеченных к экспорту');
+      _toast(
+        tr(
+          'Нет регионов, отмеченных к экспорту',
+          'No regions are marked for export',
+        ),
+      );
       return;
     }
     final idList = Int64List.fromList(ids);
     final missing = await api.exportMissing(ids: idList);
     if (missing.isNotEmpty) {
       _toast(
-        'Нет доступа к записям (${missing.length}). Подключите рекордер и попробуйте снова',
+        tr(
+          'Нет доступа к записям (${missing.length}). Подключите рекордер и попробуйте снова',
+          'Recordings not available (${missing.length}). Connect the recorder and try again',
+        ),
       );
       return;
     }
     if (!mounted) return;
-    final dest = await pickFolder(context, title: 'Куда сохранить');
+    final dest = await pickFolder(
+      context,
+      title: tr('Куда сохранить', 'Where to save'),
+    );
     if (dest == null || !mounted) return;
     api.setSetting(key: 'export.template', value: _template.text);
     api.setSetting(key: 'export.format', value: _format);
@@ -207,7 +224,12 @@ class _ReviewPageState extends State<ReviewPage> {
     final go = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Сохранить ${names.length} файлов?'),
+        title: Text(
+          tr(
+            'Сохранить ${names.length} файлов?',
+            'Save ${names.length} files?',
+          ),
+        ),
         content: SizedBox(
           width: double.maxFinite,
           child: Column(
@@ -228,11 +250,11 @@ class _ReviewPageState extends State<ReviewPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Отмена'),
+            child: Text(tr('Отмена', 'Cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Экспортировать'),
+            child: Text(tr('Экспортировать', 'Export')),
           ),
         ],
       ),
@@ -252,14 +274,27 @@ class _ReviewPageState extends State<ReviewPage> {
     );
     if (result == null || !mounted) return;
     if (result.cancelled) {
-      _toast('Экспорт отменён. Сохранено файлов: ${result.written}');
+      _toast(
+        tr(
+          'Экспорт отменён. Сохранено файлов: ${result.written}',
+          'Export cancelled. Files saved: ${result.written}',
+        ),
+      );
     } else if (result.errors.isNotEmpty) {
       _toast(
-        'Сохранено файлов: ${result.written}, ошибок: ${result.errors.length}. '
-        'Первая: ${result.errors.first}',
+        tr(
+          'Сохранено файлов: ${result.written}, ошибок: ${result.errors.length}. '
+              'Первая: ${result.errors.first}',
+          'Files saved: ${result.written}, errors: ${result.errors.length}. First: ${result.errors.first}',
+        ),
       );
     } else {
-      _toast('Сохранено файлов: ${result.written} в $dest');
+      _toast(
+        tr(
+          'Сохранено файлов: ${result.written} в $dest',
+          'Files saved: ${result.written} to $dest',
+        ),
+      );
     }
   }
 
@@ -274,12 +309,15 @@ class _ReviewPageState extends State<ReviewPage> {
     final list = !_loaded
         ? const Center(child: CircularProgressIndicator())
         : _rows.isEmpty
-        ? const Center(
+        ? Center(
             child: Padding(
               padding: EdgeInsets.all(24),
               child: Text(
-                'Регионов пока нет. Выделите участок во вкладке «Разметка» '
-                'и нажмите «Регион».',
+                tr(
+                  'Регионов пока нет. Выделите участок во вкладке «Разметка» '
+                      'и нажмите «Регион».',
+                  'No regions yet. Select a stretch on the Markup page and tap Region.',
+                ),
                 textAlign: TextAlign.center,
               ),
             ),
@@ -290,7 +328,10 @@ class _ReviewPageState extends State<ReviewPage> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                 child: Text(
-                  'Регионов: ${_rows.length} в $files записях · к экспорту ${_toExport.length}',
+                  tr(
+                    'Регионов: ${_rows.length} в $files записях · к экспорту ${_toExport.length}',
+                    '${_rows.length} regions in $files recordings · ${_toExport.length} to export',
+                  ),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
@@ -300,18 +341,18 @@ class _ReviewPageState extends State<ReviewPage> {
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: landscape ? 48 : null,
-        title: const Text('Обзор регионов'),
+        title: Text(tr('Обзор регионов', 'Region review')),
         actions: [
           IconButton(
-            tooltip: 'Обновить',
+            tooltip: tr('Обновить', 'Refresh'),
             icon: const Icon(Icons.refresh),
             onPressed: _refresh,
           ),
           if (landscape)
             IconButton(
               tooltip: _panelOpen
-                  ? 'Скрыть фильтр и экспорт'
-                  : 'Фильтр и экспорт',
+                  ? tr('Скрыть фильтр и экспорт', 'Hide filter and export')
+                  : tr('Фильтр и экспорт', 'Filter and export'),
               isSelected: _panelOpen,
               icon: const Icon(Icons.view_sidebar_outlined),
               selectedIcon: const Icon(Icons.view_sidebar),
@@ -348,7 +389,7 @@ class _ReviewPageState extends State<ReviewPage> {
 
   List<Widget> _filterChips() => [
     FilterChip(
-      label: const Text('Только к экспорту'),
+      label: Text(tr('Только к экспорту', 'Export only')),
       selected: _onlyExport,
       onSelected: (v) => setState(() => _onlyExport = v),
     ),
@@ -454,9 +495,14 @@ class _ReviewPageState extends State<ReviewPage> {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               if (!r.available)
-                const Padding(
+                Padding(
                   padding: EdgeInsets.only(top: 8),
-                  child: Text('Сейчас недоступна — подключите носитель'),
+                  child: Text(
+                    tr(
+                      'Сейчас недоступна — подключите носитель',
+                      'Not available now — connect the volume',
+                    ),
+                  ),
                 ),
             ],
           ),
@@ -476,9 +522,9 @@ class _ReviewPageState extends State<ReviewPage> {
         ? ''
         : switch (r.channels) {
             api.Channels.asSource => '',
-            api.Channels.left => 'только L',
-            api.Channels.right => 'только R',
-            api.Channels.splitMono => 'L и R отдельно',
+            api.Channels.left => tr('только L', 'L only'),
+            api.Channels.right => tr('только R', 'R only'),
+            api.Channels.splitMono => tr('L и R отдельно', 'L and R apart'),
           };
     final details = [
       if (note.isNotEmpty) note.replaceFirst(' → ', '→ '),
@@ -531,7 +577,7 @@ class _ReviewPageState extends State<ReviewPage> {
                       child: GestureDetector(
                         onTap: () => _rename(r),
                         child: Text(
-                          r.name.isEmpty ? 'Без имени' : r.name,
+                          r.name.isEmpty ? tr('Без имени', 'Untitled') : r.name,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.titleSmall,
@@ -540,7 +586,10 @@ class _ReviewPageState extends State<ReviewPage> {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      '${len.toStringAsFixed(2)} с',
+                      tr(
+                        '${len.toStringAsFixed(2)} с',
+                        '${len.toStringAsFixed(2)} s',
+                      ),
                       style: theme.textTheme.bodySmall,
                     ),
                   ],
@@ -561,7 +610,7 @@ class _ReviewPageState extends State<ReviewPage> {
               Row(
                 children: [
                   IconButton(
-                    tooltip: 'Прослушать',
+                    tooltip: tr('Прослушать', 'Listen'),
                     icon: Icon(
                       _playing == r.id ? Icons.stop : Icons.play_arrow,
                     ),
@@ -570,7 +619,7 @@ class _ReviewPageState extends State<ReviewPage> {
                   if (r.fileChannels > 1) _channelMenu(r),
                   const Spacer(),
                   IconButton(
-                    tooltip: 'В разметку',
+                    tooltip: tr('В разметку', 'Open in markup'),
                     icon: const Icon(Icons.open_in_new),
                     onPressed: () => widget.onOpen(r.path, region: r.id),
                   ),
@@ -590,14 +639,14 @@ class _ReviewPageState extends State<ReviewPage> {
   }
 
   Widget _channelMenu(api.ReviewRegion r) {
-    const labels = {
-      api.Channels.asSource: 'Стерео',
-      api.Channels.left: 'Только L',
-      api.Channels.right: 'Только R',
-      api.Channels.splitMono: 'L и R отдельно',
+    final labels = {
+      api.Channels.asSource: tr('Стерео', 'Stereo'),
+      api.Channels.left: tr('Только L', 'L only'),
+      api.Channels.right: tr('Только R', 'R only'),
+      api.Channels.splitMono: tr('L и R отдельно', 'L and R apart'),
     };
     return PopupMenuButton<api.Channels>(
-      tooltip: 'Каналы при экспорте',
+      tooltip: tr('Каналы при экспорте', 'Channels on export'),
       initialValue: r.channels,
       onSelected: (c) =>
           _edit(() => api.reviewSetChannels(id: r.id, channels: c)),
@@ -620,7 +669,7 @@ class _ReviewPageState extends State<ReviewPage> {
     controller: _template,
     decoration: InputDecoration(
       isDense: true,
-      labelText: 'Имя файла',
+      labelText: tr('Имя файла', 'File name'),
       border: const OutlineInputBorder(),
       suffixIcon: Tooltip(
         message: api.templateHelp(),
@@ -645,7 +694,12 @@ class _ReviewPageState extends State<ReviewPage> {
     width: double.infinity,
     child: FilledButton.icon(
       icon: const Icon(Icons.save_alt),
-      label: Text('Экспортировать (${_toExport.length})…'),
+      label: Text(
+        tr(
+          'Экспортировать (${_toExport.length})…',
+          'Export (${_toExport.length})…',
+        ),
+      ),
       onPressed: _toExport.isEmpty ? null : _export,
     ),
   );
@@ -686,11 +740,11 @@ class _ReviewPageState extends State<ReviewPage> {
       child: ListView(
         padding: const EdgeInsets.all(12),
         children: [
-          Text('Фильтр', style: theme.textTheme.titleSmall),
+          Text(tr('Фильтр', 'Filter'), style: theme.textTheme.titleSmall),
           const SizedBox(height: 8),
           Wrap(spacing: 4, runSpacing: 4, children: _filterChips()),
           const Divider(height: 32),
-          Text('Экспорт', style: theme.textTheme.titleSmall),
+          Text(tr('Экспорт', 'Export'), style: theme.textTheme.titleSmall),
           const SizedBox(height: 12),
           _templateField(),
           const SizedBox(height: 8),
@@ -753,7 +807,7 @@ class _ExportDialogState extends State<_ExportDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Экспорт'),
+      title: Text(tr('Экспорт', 'Export')),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -770,7 +824,7 @@ class _ExportDialogState extends State<_ExportDialog> {
                   setState(() => _cancelling = true);
                   api.cancelExport();
                 },
-          child: const Text('Отменить'),
+          child: Text(tr('Отменить', 'Undo')),
         ),
       ],
     );

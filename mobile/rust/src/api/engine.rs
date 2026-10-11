@@ -10,13 +10,19 @@ use anyhow::{Context, Result, bail};
 use flutter_rust_bridge::frb;
 use sample_creator_engine::audio::{self, peaks, player::Player};
 use sample_creator_engine::core::history::{Change, History};
-use sample_creator_engine::core::{ChannelMode, Marker, PALETTE, Region};
+use sample_creator_engine::core::{ChannelMode, Marker, PALETTE, Region, color_name};
 use sample_creator_engine::recording::{self, Recording};
 use sample_creator_engine::store::Library;
 
 use crate::state::{
     Open, STATE, State, commit, edit_marker, edit_region, frame, library, player, state, with_open,
 };
+
+/// Interface language for the engine's own texts (colours, formats, errors).
+#[frb(sync)]
+pub fn set_language(russian: bool) {
+    sample_creator_engine::lang::set_russian(russian);
+}
 
 #[frb(init)]
 pub fn init_app() {
@@ -409,8 +415,9 @@ pub struct PaletteColor {
 pub fn palette() -> Vec<PaletteColor> {
     PALETTE
         .iter()
-        .map(|(name, [r, g, b])| PaletteColor {
-            name: (*name).to_owned(),
+        .enumerate()
+        .map(|(i, (_, [r, g, b]))| PaletteColor {
+            name: color_name(i).to_owned(),
             rgb: u32::from(*r) << 16 | u32::from(*g) << 8 | u32::from(*b),
         })
         .collect()

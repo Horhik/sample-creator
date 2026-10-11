@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'src/rust/api/engine.dart' as engine;
 import 'src/rust/api/review.dart' as api;
 import 'waveform.dart';
+import 'l10n.dart';
 
 /// A part as laid out on the output timeline (all frames).
 class Clip {
@@ -341,27 +342,37 @@ Future<(int, int, int)?> editPartDialog(
   int index,
 ) {
   final p = r.parts[index];
-  int ms(int frames) => (frames * 1000 / r.sampleRate).round();
-  var fadeIn = ms(p.fadeIn).clamp(0, 3000).toDouble();
-  var fadeOut = ms(p.fadeOut).clamp(0, 3000).toDouble();
-  var overlap = ms(p.overlap).clamp(-3000, 3000).toDouble();
+  int toMs(int frames) => (frames * 1000 / r.sampleRate).round();
+  var fadeIn = toMs(p.fadeIn).clamp(0, 3000).toDouble();
+  var fadeOut = toMs(p.fadeOut).clamp(0, 3000).toDouble();
+  var overlap = toMs(p.overlap).clamp(-3000, 3000).toDouble();
   return showDialog<(int, int, int)>(
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, set) => AlertDialog(
-        title: Text('Часть ${index + 1}'),
+        title: Text(tr('Часть ${index + 1}', 'Part ${index + 1}')),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Fade in: ${fadeIn.round()} мс'),
+            Text(
+              tr(
+                'Fade in: ${fadeIn.round()} мс',
+                'Fade in: ${fadeIn.round()} ms',
+              ),
+            ),
             Slider(
               max: 3000,
               divisions: 300,
               value: fadeIn,
               onChanged: (v) => set(() => fadeIn = v),
             ),
-            Text('Fade out: ${fadeOut.round()} мс'),
+            Text(
+              tr(
+                'Fade out: ${fadeOut.round()} мс',
+                'Fade out: ${fadeOut.round()} ms',
+              ),
+            ),
             Slider(
               max: 3000,
               divisions: 300,
@@ -371,8 +382,14 @@ Future<(int, int, int)?> editPartDialog(
             if (index > 0) ...[
               Text(
                 overlap >= 0
-                    ? 'Наложение на предыдущую: ${overlap.round()} мс'
-                    : 'Пауза перед частью: ${-overlap.round()} мс',
+                    ? tr(
+                        'Наложение на предыдущую: ${overlap.round()} мс',
+                        'Overlap with the previous: ${overlap.round()} ms',
+                      )
+                    : tr(
+                        'Пауза перед частью: ${-overlap.round()} мс',
+                        'Pause before the part: ${-overlap.round()} ms',
+                      ),
               ),
               Slider(
                 min: -3000,
@@ -382,8 +399,11 @@ Future<(int, int, int)?> editPartDialog(
                 onChanged: (v) => set(() => overlap = v),
               ),
             ],
-            const Text(
-              'Плавный переход: наложение и равные fade out / fade in у соседей.',
+            Text(
+              tr(
+                'Плавный переход: наложение и равные fade out / fade in у соседей.',
+                'Smooth transition: overlap plus matching fade out / fade in on the neighbours.',
+              ),
               style: TextStyle(fontSize: 12),
             ),
           ],
@@ -391,7 +411,7 @@ Future<(int, int, int)?> editPartDialog(
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена'),
+            child: Text(tr('Отмена', 'Cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, (
@@ -399,7 +419,7 @@ Future<(int, int, int)?> editPartDialog(
               fadeOut.round(),
               overlap.round(),
             )),
-            child: const Text('Готово'),
+            child: Text(tr('Готово', 'Done')),
           ),
         ],
       ),
@@ -432,8 +452,8 @@ Future<void> applyPartDialog(
 String overlapNote(api.ReviewRegion r, int index) {
   if (index == 0) return '';
   final ms = (r.parts[index].overlap * 1000 / r.sampleRate).round();
-  if (ms > 0) return ' · наложение $ms мс';
-  if (ms < 0) return ' · пауза ${-ms} мс';
+  if (ms > 0) return tr(' · наложение $ms мс', ' · overlap $ms ms');
+  if (ms < 0) return tr(' · пауза ${-ms} мс', ' · pause ${-ms} ms');
   return '';
 }
 

@@ -9,6 +9,10 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 // These functions are ignored because they are not marked as `pub`: `file_info`, `stem`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`
 
+/// Interface language for the engine's own texts (colours, formats, errors).
+void setLanguage({required bool russian}) =>
+    RustLib.instance.api.crateApiEngineSetLanguage(russian: russian);
+
 /// Opens the library in the app's private storage. Safe to call again.
 Future<void> init({required String dataDir, required String cacheDir}) =>
     RustLib.instance.api.crateApiEngineInit(

@@ -6,6 +6,7 @@ import 'review.dart';
 import 'src/rust/api/review.dart' as review_api;
 import 'display.dart';
 import 'sync_ui.dart';
+import 'l10n.dart';
 
 /// The three pages of the desktop app: markup, region review, processing.
 /// The player is shared; whichever page is shown takes it over.
@@ -61,10 +62,11 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     setState(() => _page = page);
   }
 
-  static const _destinations = [
-    (Icons.edit_note, 'Разметка'),
-    (Icons.view_list_outlined, 'Обзор регионов'),
-    (Icons.tune, 'Обработка'),
+  // A getter: labels follow the current language.
+  static List<(IconData, String)> get _destinations => [
+    (Icons.edit_note, tr('Разметка', 'Markup')),
+    (Icons.view_list_outlined, tr('Обзор регионов', 'Region review')),
+    (Icons.tune, tr('Обработка', 'Processing')),
   ];
 
   @override

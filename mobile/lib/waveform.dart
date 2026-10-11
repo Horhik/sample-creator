@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'l10n.dart';
 
 import 'src/rust/api/engine.dart' as engine;
 import 'src/rust/api/review.dart' as review;
@@ -370,11 +371,11 @@ String regionNote(review.ReviewRegion r) {
     var factor = (r.speed / 100).toStringAsFixed(2);
     factor = factor.replaceFirst(RegExp(r'\.?0+$'), '');
     notes.add('×$factor');
-    if (r.keepPitch) notes.add('тон сохранён');
+    if (r.keepPitch) notes.add(tr('тон сохранён', 'pitch kept'));
   }
-  if (r.edited) notes.add('склейка');
+  if (r.edited) notes.add(tr('склейка', 'spliced'));
   final out = r.outputFrames / r.sampleRate;
-  return ' → ${out.toStringAsFixed(2)} с (${notes.join(', ')})';
+  return ' → ${out.toStringAsFixed(2)} $sec (${notes.join(', ')})';
 }
 
 /// Closest zoom, frames per pixel (mirrors `peaks::MIN_FRAMES_PER_PX`): a

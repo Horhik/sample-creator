@@ -11,14 +11,20 @@ use anyhow::{Context, Result, bail};
 
 use crate::audio::bwf::{Bext, SampleFormat};
 use crate::audio::decode::{self, FrameSource, MemorySource};
-use crate::core::{ChannelMode, PALETTE, Region};
+use crate::core::{ChannelMode, Region};
 use crate::dsp;
+use crate::lang::{is_russian, tr};
 use wav::WavWriter;
 
 pub const DEFAULT_TEMPLATE: &str = "{name}";
 
 /// Placeholders understood in the name template, for the UI.
-pub const TEMPLATE_HELP: &str = "{name} — имя региона, {source} — имя записи (псевдоним или файл), {index} — номер региона в записи, {color} — цвет";
+pub fn template_help() -> &'static str {
+    tr(
+        "{name} — имя региона, {source} — имя записи (псевдоним или файл), {index} — номер региона в записи, {color} — цвет",
+        "{name} — region name, {source} — recording name (alias or file), {index} — region number in the recording, {color} — colour",
+    )
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputFormat {
@@ -30,11 +36,19 @@ pub enum OutputFormat {
 }
 
 impl OutputFormat {
-    pub const ALL: [(OutputFormat, &'static str); 3] = [
-        (OutputFormat::AsSource, "как в исходнике"),
-        (OutputFormat::Int24, "WAV 24 бит"),
-        (OutputFormat::Float32, "WAV 32 бит float"),
+    pub const ALL: [OutputFormat; 3] = [
+        OutputFormat::AsSource,
+        OutputFormat::Int24,
+        OutputFormat::Float32,
     ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            OutputFormat::AsSource => tr("как в исходнике", "same as source"),
+            OutputFormat::Int24 => tr("WAV 24 бит", "WAV 24-bit"),
+            OutputFormat::Float32 => tr("WAV 32 бит float", "WAV 32-bit float"),
+        }
+    }
 
     fn resolve(self, source: Option<SampleFormat>) -> SampleFormat {
         match self {
@@ -140,9 +154,7 @@ fn file_name(template: &str, source: &Source, region: &Region, index: usize) -> 
     } else {
         template
     };
-    let color = PALETTE
-        .get(usize::from(region.color))
-        .map_or("", |(name, _)| name);
+    let color = crate::core::color_name(usize::from(region.color));
     let name = template
         .replace("{name}", region.name.trim())
         .replace("{source}", &source.title)
@@ -199,12 +211,24 @@ pub fn render(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(u64),
 ) -> Result<Vec<PathBuf>> {
-    let (info, mut source) = decode::open(&item.source.path)
-        .with_context(|| format!("не открыть {}", item.source.path.display()))?;
+    let (info, mut source) = decode::open(&item.source.path).with_context(|| {
+        format!(
+            "{} {}",
+            tr("не открыть", "cannot open"),
+            item.source.path.display()
+        )
+    })?;
     let region = &item.region;
     if region.end > info.total_frames || region.is_empty() {
+        if is_russian() {
+            bail!(
+                "регион «{}» выходит за конец записи {}",
+                region.name,
+                item.source.path.display()
+            );
+        }
         bail!(
-            "регион «{}» выходит за конец записи {}",
+            "region \"{}\" runs past the end of {}",
             region.name,
             item.source.path.display()
         );
@@ -245,7 +269,7 @@ pub fn render(
         while done < len {
             if cancel.load(Ordering::Relaxed) {
                 writer.abort();
-                bail!("отменено");
+                bail!("{}", tr("отменено", "cancelled"));
             }
             buf.clear();
             let want = (len - done).min(65536) as usize;
@@ -253,8 +277,12 @@ pub fn render(
             if read == 0 {
                 writer.abort();
                 bail!(
-                    "запись {} оборвалась раньше конца региона",
-                    item.source.path.display()
+                    "{} {}",
+                    item.source.path.display(),
+                    tr(
+                        "— запись оборвалась раньше конца региона",
+                        "ends before the region does"
+                    )
                 );
             }
             match pick {
@@ -341,7 +369,13 @@ fn read_region(source: &mut dyn FrameSource, region: &Region, channels: usize) -
     while left > 0 {
         let read = source.read(&mut samples, left.min(65536) as usize)?;
         if read == 0 {
-            bail!("запись оборвалась раньше конца региона");
+            bail!(
+                "{}",
+                tr(
+                    "запись оборвалась раньше конца региона",
+                    "the recording ends before the region does"
+                )
+            );
         }
         left -= read as u64;
     }

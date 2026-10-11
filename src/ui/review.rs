@@ -20,6 +20,7 @@ use crate::audio::player::Player;
 use crate::core::history::Store;
 use crate::core::{ChannelMode, ColorIdx, Id, PALETTE, Region};
 use crate::export::{self, OutputFormat, Source};
+use crate::lang::{is_russian, sec, tr};
 use crate::store::{FileRow, Library};
 
 const MINI_W: i32 = 220;
@@ -111,7 +112,7 @@ impl SimpleComponent for Review {
                     },
                     append: &color_filter_bar(&sender),
                     gtk::ToggleButton {
-                        set_label: "Только к экспорту",
+                        set_label: tr("Только к экспорту", "Export only"),
                         add_css_class: "flat",
                         connect_toggled[sender] => move |b| {
                             sender.input(ReviewMsg::OnlyExport(b.is_active()));
@@ -123,8 +124,8 @@ impl SimpleComponent for Review {
                     set_vexpand: true,
                     add_named[Some("empty")] = &adw::StatusPage {
                         set_icon_name: Some("view-list-symbolic"),
-                        set_title: "Регионов пока нет",
-                        set_description: Some("Выделите участок на вкладке «Разметка» и нажмите R"),
+                        set_title: tr("Регионов пока нет", "No regions yet"),
+                        set_description: Some(tr("Выделите участок на вкладке «Разметка» и нажмите R", "Select a stretch on the Markup page and press R")),
                     },
                     add_named[Some("list")] = &gtk::ScrolledWindow {
                         set_hscrollbar_policy: gtk::PolicyType::Never,
@@ -141,20 +142,20 @@ impl SimpleComponent for Review {
                     set_margin_end: 6,
 
                     gtk::Label {
-                        set_label: "Имя файла",
+                        set_label: tr("Имя файла", "File name"),
                         set_margin_start: 6,
                     },
                     #[name = "template_entry"]
                     gtk::Entry {
                         set_width_chars: 22,
-                        set_tooltip_text: Some(export::TEMPLATE_HELP),
+                        set_tooltip_text: Some(export::template_help()),
                         connect_changed[sender] => move |e| {
                             sender.input(ReviewMsg::Template(e.text().into()));
                         },
                     },
                     #[name = "format_dropdown"]
                     gtk::DropDown {
-                        set_tooltip_text: Some("Формат файлов. Каналы задаются у каждого региона"),
+                        set_tooltip_text: Some(tr("Формат файлов. Каналы задаются у каждого региона", "File format. Channels are set per region")),
                     },
                     gtk::ProgressBar {
                         set_hexpand: true,
@@ -171,7 +172,7 @@ impl SimpleComponent for Review {
                         set_visible: model.export.is_none(),
                     },
                     gtk::Button {
-                        set_label: "Отмена",
+                        set_label: tr("Отмена", "Cancel"),
                         #[watch]
                         set_visible: model.export.is_some(),
                         connect_clicked => ReviewMsg::Cancel,
@@ -179,7 +180,7 @@ impl SimpleComponent for Review {
                     gtk::Button {
                         add_css_class: "suggested-action",
                         #[watch]
-                        set_label: &format!("Экспортировать {}…", model.to_export().count()),
+                        set_label: &format!("{} {}…", tr("Экспортировать", "Export"), model.to_export().count()),
                         #[watch]
                         set_sensitive: model.export.is_none() && model.to_export().count() > 0,
                         connect_clicked => ReviewMsg::ChooseFolder,
@@ -226,18 +227,18 @@ impl SimpleComponent for Review {
         let widgets = view_output!();
 
         widgets.template_entry.set_text(&template);
-        let names: Vec<&str> = OutputFormat::ALL.iter().map(|(_, n)| *n).collect();
+        let names: Vec<&str> = OutputFormat::ALL.iter().map(|f| f.label()).collect();
         widgets
             .format_dropdown
             .set_model(Some(&gtk::StringList::new(&names)));
         let pos = OutputFormat::ALL
             .iter()
-            .position(|(f, _)| *f == format)
+            .position(|f| *f == format)
             .unwrap_or(0);
         widgets.format_dropdown.set_selected(pos as u32);
         let s = sender.clone();
         widgets.format_dropdown.connect_selected_notify(move |d| {
-            if let Some((f, _)) = OutputFormat::ALL.get(d.selected() as usize) {
+            if let Some(f) = OutputFormat::ALL.get(d.selected() as usize) {
                 s.input(ReviewMsg::Format(*f));
             }
         });
@@ -253,7 +254,10 @@ impl SimpleComponent for Review {
                 self.previewing = None;
                 match self.library.all_regions() {
                     Ok(rows) => self.rows = rows,
-                    Err(err) => self.toast(&format!("Не удалось прочитать регионы: {err:#}")),
+                    Err(err) => self.toast(&format!(
+                        "{}: {err:#}",
+                        tr("Не удалось прочитать регионы", "Could not read the regions")
+                    )),
                 }
                 self.start_peaks();
                 self.rebuild(&sender);
@@ -328,12 +332,21 @@ impl Review {
         }
         let mut files: Vec<Id> = self.rows.iter().map(|(f, _)| f.id).collect();
         files.dedup();
-        format!(
-            "Регионов: {} в {} записях · к экспорту {}",
-            self.rows.len(),
-            files.len(),
-            self.to_export().count()
-        )
+        if is_russian() {
+            format!(
+                "Регионов: {} в {} записях · к экспорту {}",
+                self.rows.len(),
+                files.len(),
+                self.to_export().count()
+            )
+        } else {
+            format!(
+                "{} regions in {} recordings · {} to export",
+                self.rows.len(),
+                files.len(),
+                self.to_export().count()
+            )
+        }
     }
 
     /// Mini waveforms come from the peak cache, which exists for every file opened
@@ -369,7 +382,10 @@ impl Review {
         if visible.is_empty() && !self.rows.is_empty() {
             self.groups.append(
                 &gtk::Label::builder()
-                    .label("Под фильтр ничего не попадает")
+                    .label(tr(
+                        "Под фильтр ничего не попадает",
+                        "Nothing matches the filter",
+                    ))
                     .css_classes(["dim-label"])
                     .margin_top(24)
                     .build(),
@@ -412,7 +428,14 @@ impl Review {
         );
         let missing = !file.path.exists();
         let path_label = if missing {
-            format!("{} — нет доступа (рекордер отключён?)", file.path.display())
+            format!(
+                "{} — {}",
+                file.path.display(),
+                tr(
+                    "нет доступа (рекордер отключён?)",
+                    "not available (recorder unplugged?)"
+                )
+            )
         } else {
             file.path.display().to_string()
         };
@@ -468,7 +491,7 @@ impl Review {
             .hexpand(true)
             .build();
         let name = if r.name.is_empty() {
-            "без имени"
+            tr("без имени", "untitled")
         } else {
             &r.name
         };
@@ -486,17 +509,18 @@ impl Review {
         );
         let channels = match (r.channels, file.channels) {
             (_, 1) | (ChannelMode::AsSource, _) => "",
-            (ChannelMode::Left, _) => " · только L",
-            (ChannelMode::Right, _) => " · только R",
-            (ChannelMode::SplitMono, _) => " · L и R отдельно",
+            (ChannelMode::Left, _) => tr(" · только L", " · L only"),
+            (ChannelMode::Right, _) => tr(" · только R", " · R only"),
+            (ChannelMode::SplitMono, _) => tr(" · L и R отдельно", " · L and R apart"),
         };
         text.append(
             &gtk::Label::builder()
                 .label(format!(
-                    "{} – {} · {:.2} с{speed}{channels}",
+                    "{} – {} · {:.2} {}{speed}{channels}",
                     format_time(r.start as f64 / rate, true),
                     format_time(r.end as f64 / rate, true),
                     r.len() as f64 / rate,
+                    sec(),
                     speed = speed_note(r, rate),
                 ))
                 .xalign(0.0)
@@ -511,7 +535,7 @@ impl Review {
 
         let play = gtk::Button::builder()
             .icon_name("media-playback-start-symbolic")
-            .tooltip_text("Прослушать")
+            .tooltip_text(tr("Прослушать", "Listen"))
             .css_classes(["circular", "flat"])
             .valign(gtk::Align::Center)
             .sensitive(self.player.is_some())
@@ -522,7 +546,7 @@ impl Review {
 
         let open = gtk::Button::builder()
             .icon_name("document-edit-symbolic")
-            .tooltip_text("Открыть в разметке")
+            .tooltip_text(tr("Открыть в разметке", "Open in markup"))
             .css_classes(["circular", "flat"])
             .valign(gtk::Align::Center)
             .build();
@@ -534,7 +558,7 @@ impl Review {
 
         let export = gtk::CheckButton::builder()
             .active(r.export)
-            .tooltip_text("Экспортировать")
+            .tooltip_text(tr("Экспортировать", "Export"))
             .valign(gtk::Align::Center)
             .build();
         let (s, id) = (sender.clone(), r.id);
@@ -611,14 +635,17 @@ impl Review {
         }
         region.export = export;
         if let Err(err) = self.library.save_region(region) {
-            self.toast(&format!("Не удалось сохранить: {err:#}"));
+            self.toast(&format!(
+                "{}: {err:#}",
+                tr("Не удалось сохранить", "Could not save")
+            ));
         }
     }
 
     fn choose_folder(&self, sender: &ComponentSender<Self>) {
         let dialog = gtk::FileDialog::builder()
-            .title("Куда сохранить сэмплы")
-            .accept_label("Экспортировать сюда")
+            .title(tr("Куда сохранить сэмплы", "Where to save the samples"))
+            .accept_label(tr("Экспортировать сюда", "Export here"))
             .build();
         if let Some(dir) = self.library.setting("export.dir") {
             dialog.set_initial_folder(Some(&gio::File::for_path(dir)));
@@ -652,8 +679,13 @@ impl Review {
         let missing = export::missing_sources(&regions);
         if !missing.is_empty() {
             self.toast(&format!(
-                "Нет доступа к записям ({}). Подключите рекордер и попробуйте снова",
-                missing.len()
+                "{} ({}). {}",
+                tr("Нет доступа к записям", "Recordings not available"),
+                missing.len(),
+                tr(
+                    "Подключите рекордер и попробуйте снова",
+                    "Connect the recorder and try again"
+                )
             ));
             return;
         }
@@ -694,15 +726,21 @@ impl Review {
                 eprintln!("export: {e}");
             }
             self.toast(&format!(
-                "Сохранено файлов: {written}, ошибок: {}. Первая: {}",
+                "{}: {written}, {}: {}. {}: {}",
+                tr("Сохранено файлов", "Files saved"),
+                tr("ошибок", "errors"),
                 errors.len(),
+                tr("Первая", "First"),
                 errors[0]
             ));
             return;
         }
         let toast = adw::Toast::builder()
-            .title(format!("Сохранено файлов: {written}"))
-            .button_label("Открыть папку")
+            .title(format!(
+                "{}: {written}",
+                tr("Сохранено файлов", "Files saved")
+            ))
+            .button_label(tr("Открыть папку", "Open folder"))
             .timeout(8)
             .build();
         let window = self.toasts.root().and_downcast::<gtk::Window>();
@@ -761,9 +799,9 @@ fn color_filter_bar(sender: &ComponentSender<Review>) -> gtk::Box {
     let bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     bar.add_css_class("linked");
     let all = gtk::ToggleButton::builder()
-        .label("Все")
+        .label(tr("Все", "All"))
         .active(true)
-        .tooltip_text("Все цвета")
+        .tooltip_text(tr("Все цвета", "All colours"))
         .build();
     let s = sender.clone();
     all.connect_toggled(move |b| {
@@ -775,7 +813,7 @@ fn color_filter_bar(sender: &ComponentSender<Review>) -> gtk::Box {
     for (i, (name, _)) in PALETTE.iter().enumerate() {
         let b = gtk::ToggleButton::builder()
             .child(&color_swatch(i as ColorIdx, 12))
-            .tooltip_text(format!("Только {name}"))
+            .tooltip_text(format!("{} {name}", tr("Только", "Only")))
             .group(&all)
             .build();
         let s = sender.clone();
@@ -804,15 +842,16 @@ fn speed_note(r: &Region, rate: f64) -> String {
                 .to_owned(),
         );
         if r.keep_pitch {
-            notes.push("тон сохранён".into());
+            notes.push(tr("тон сохранён", "pitch kept").into());
         }
     }
     if r.is_edited() {
-        notes.push("склейка".into());
+        notes.push(tr("склейка", "spliced").into());
     }
     format!(
-        " → {:.2} с ({})",
+        " → {:.2} {} ({})",
         r.output_len() as f64 / rate,
+        sec(),
         notes.join(", ")
     )
 }

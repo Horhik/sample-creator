@@ -419,7 +419,7 @@ pub fn reattach() {
 
 #[frb(sync)]
 pub fn template_help() -> String {
-    export::TEMPLATE_HELP.to_owned()
+    export::template_help().to_owned()
 }
 
 #[frb(sync)]
@@ -436,9 +436,9 @@ pub struct FormatOption {
 pub fn output_formats() -> Vec<FormatOption> {
     OutputFormat::ALL
         .iter()
-        .map(|(f, label)| FormatOption {
+        .map(|f| FormatOption {
             key: f.key().to_owned(),
-            label: (*label).to_owned(),
+            label: f.label().to_owned(),
         })
         .collect()
 }
@@ -486,7 +486,13 @@ pub fn export_regions(
 ) -> Result<()> {
     let state = state()?;
     let dest = PathBuf::from(dest);
-    std::fs::create_dir_all(&dest).with_context(|| format!("не создать {}", dest.display()))?;
+    std::fs::create_dir_all(&dest).with_context(|| {
+        format!(
+            "{} {}",
+            sample_creator_engine::lang::tr("не создать", "cannot create"),
+            dest.display()
+        )
+    })?;
     let regions = export_list(&ids)?;
     let planned = export::plan(&regions, &template, &dest);
     let total = planned.iter().map(|p| p.frames()).sum::<u64>() as i64;

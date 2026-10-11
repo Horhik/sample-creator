@@ -105,7 +105,11 @@ impl WavWriter {
         let data_len = self.out.stream_position()? - self.data_start;
         ensure!(
             data_len < u64::from(u32::MAX) - 4096,
-            "регион больше 4 ГБ: такой WAV не записать"
+            "{}",
+            crate::lang::tr(
+                "регион больше 4 ГБ: такой WAV не записать",
+                "region over 4 GB: too big for a WAV file"
+            )
         );
         if data_len % 2 == 1 {
             self.out.write_all(&[0])?;

@@ -8,6 +8,7 @@ use relm4::gtk::{self, gio, glib, prelude::*};
 
 use super::markup_list::color_swatch;
 use crate::core::{ColorIdx, PALETTE};
+use crate::lang::tr;
 
 /// What the menu needs to know about the editor's state.
 pub struct Context {
@@ -38,37 +39,72 @@ pub fn show(
     let menu = gio::Menu::new();
 
     let play = gio::Menu::new();
-    entry(&play, "Воспроизвести / пауза", "play", Some("space"));
+    entry(
+        &play,
+        tr("Воспроизвести / пауза", "Play / pause"),
+        "play",
+        Some("space"),
+    );
     let label = if ctx.auto_loop {
-        "Не зацикливать выделение"
+        tr("Не зацикливать выделение", "Don't loop the selection")
     } else {
-        "Зацикливать выделение"
+        tr("Зацикливать выделение", "Loop the selection")
     };
     entry(&play, label, "loop", Some("l"));
     menu.append_section(None, &play);
 
     let create = gio::Menu::new();
     if ctx.has_selection {
-        entry(&create, "Создать регион из выделения", "region", Some("r"));
+        entry(
+            &create,
+            tr("Создать регион из выделения", "Region from selection"),
+            "region",
+            Some("r"),
+        );
     }
-    entry(&create, "Маркер здесь", "marker-here", None);
-    entry(&create, "Маркер у плейхеда", "marker", Some("m"));
-    entry(&create, "Начало выделения у плейхеда", "set-in", Some("i"));
-    entry(&create, "Конец выделения у плейхеда", "set-out", Some("o"));
+    entry(
+        &create,
+        tr("Маркер здесь", "Marker here"),
+        "marker-here",
+        None,
+    );
+    entry(
+        &create,
+        tr("Маркер у плейхеда", "Marker at playhead"),
+        "marker",
+        Some("m"),
+    );
+    entry(
+        &create,
+        tr("Начало выделения у плейхеда", "Selection start at playhead"),
+        "set-in",
+        Some("i"),
+    );
+    entry(
+        &create,
+        tr("Конец выделения у плейхеда", "Selection end at playhead"),
+        "set-out",
+        Some("o"),
+    );
     menu.append_section(None, &create);
 
     if ctx.marker_selected || ctx.region_selected {
         let item = gio::Menu::new();
-        entry(&item, "Переименовать", "rename", Some("Return"));
+        entry(
+            &item,
+            tr("Переименовать", "Rename"),
+            "rename",
+            Some("Return"),
+        );
         if ctx.region_selected {
             let label = if ctx.region_exported {
-                "Не экспортировать"
+                tr("Не экспортировать", "Don't export")
             } else {
-                "Экспортировать"
+                tr("Экспортировать", "Export")
             };
             entry(&item, label, "export", Some("e"));
         }
-        entry(&item, "Удалить", "delete", Some("Delete"));
+        entry(&item, tr("Удалить", "Delete"), "delete", Some("Delete"));
         menu.append_section(None, &item);
     }
 
@@ -78,20 +114,33 @@ pub fn show(
     row.set_attribute_value("custom", Some(&"colors".to_variant()));
     colors.append_item(&row);
     let title = if ctx.marker_selected || ctx.region_selected {
-        "Цвет (1–8)"
+        tr("Цвет (1–8)", "Colour (1–8)")
     } else {
-        "Цвет следующего региона (1–8)"
+        tr(
+            "Цвет следующего региона (1–8)",
+            "Colour of the next region (1–8)",
+        )
     };
     menu.append_section(Some(title), &colors);
 
     let edit = gio::Menu::new();
     if ctx.can_undo {
-        entry(&edit, "Отменить", "undo", Some("<Control>z"));
+        entry(&edit, tr("Отменить", "Undo"), "undo", Some("<Control>z"));
     }
     if ctx.can_redo {
-        entry(&edit, "Повторить", "redo", Some("<Control><Shift>z"));
+        entry(
+            &edit,
+            tr("Повторить", "Redo"),
+            "redo",
+            Some("<Control><Shift>z"),
+        );
     }
-    entry(&edit, "Показать весь файл", "zoom-fit", Some("0"));
+    entry(
+        &edit,
+        tr("Показать весь файл", "Show the whole file"),
+        "zoom-fit",
+        Some("0"),
+    );
     menu.append_section(None, &edit);
 
     let popover = gtk::PopoverMenu::from_model(Some(&menu));

@@ -16,6 +16,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::core::{ChannelMode, Marker, Markup, Part, Region};
+use crate::lang::tr;
 use crate::store::{FileFull, Library, now_ms};
 
 pub const FILE_NAME: &str = "sample-creator.json";
@@ -134,11 +135,21 @@ pub fn target(library: &Library, root: &Path) -> Option<Target> {
 /// (the user said where an existing one is).
 pub fn enable(library: &Library, root: &Path, location: &Path, must_exist: bool) -> Result<Report> {
     if !location.starts_with(root) {
-        bail!("файл разметки должен лежать на этом же носителе");
+        bail!(
+            "{}",
+            tr(
+                "файл разметки должен лежать на этом же носителе",
+                "the markup file must be on the same volume"
+            )
+        );
     }
     let path = file_in(location);
     if must_exist && !path.exists() {
-        bail!("в {} нет файла {FILE_NAME}", location.display());
+        bail!(
+            "{}: {} {FILE_NAME}",
+            location.display(),
+            tr("нет файла", "no file")
+        );
     }
     if path.exists() {
         read(&path)?;
@@ -157,9 +168,16 @@ pub fn disable(library: &Library, root: &Path) -> Result<()> {
 }
 
 pub fn sync_target(library: &Library, root: &Path) -> Result<Report> {
-    let t = target(library, root).context("для этого носителя нет файла разметки")?;
+    let t = target(library, root).context(tr(
+        "для этого носителя нет файла разметки",
+        "this volume has no markup file",
+    ))?;
     if !t.available() {
-        bail!("носитель {} не подключён", root.display());
+        bail!(
+            "{}: {}",
+            root.display(),
+            tr("носитель не подключён", "volume not connected")
+        );
     }
     let report = sync(library, &t.root, &t.file())?;
     library.set_setting(&format!("{LAST}{}", root.display()), &now_ms().to_string())?;
@@ -242,16 +260,30 @@ pub fn sync(library: &Library, root: &Path, path: &Path) -> Result<Report> {
     Ok(report)
 }
 
+fn not_ours() -> &'static str {
+    tr(
+        "не файл разметки Sample Creator",
+        "not a Sample Creator markup file",
+    )
+}
+
 pub fn read(path: &Path) -> Result<StateFile> {
     let text = std::fs::read_to_string(path)
-        .with_context(|| format!("не прочитать {}", path.display()))?;
+        .with_context(|| format!("{} {}", tr("не прочитать", "cannot read"), path.display()))?;
     let state: StateFile = serde_json::from_str(&text)
-        .with_context(|| format!("{} — не файл разметки Sample Creator", path.display()))?;
+        .with_context(|| format!("{}: {}", path.display(), not_ours()))?;
     if state.format != FORMAT {
-        bail!("{} — не файл разметки Sample Creator", path.display());
+        bail!("{}: {}", path.display(), not_ours());
     }
     if state.version > VERSION {
-        bail!("{} записан более новой версией приложения", path.display());
+        bail!(
+            "{}: {}",
+            path.display(),
+            tr(
+                "записан более новой версией приложения",
+                "written by a newer version of the app"
+            )
+        );
     }
     Ok(state)
 }
@@ -261,8 +293,10 @@ pub fn read(path: &Path) -> Result<StateFile> {
 fn write(path: &Path, state: &StateFile) -> Result<()> {
     let tmp = path.with_extension("json.part");
     let text = serde_json::to_string_pretty(state)?;
-    std::fs::write(&tmp, text).with_context(|| format!("не записать {}", tmp.display()))?;
-    std::fs::rename(&tmp, path).with_context(|| format!("не записать {}", path.display()))?;
+    std::fs::write(&tmp, text)
+        .with_context(|| format!("{} {}", tr("не записать", "cannot write"), tmp.display()))?;
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("{} {}", tr("не записать", "cannot write"), path.display()))?;
     Ok(())
 }
 

@@ -11,6 +11,7 @@ import 'src/rust/api/engine.dart' as engine;
 import 'src/rust/api/review.dart' as review;
 import 'sync_ui.dart';
 import 'waveform.dart';
+import 'l10n.dart';
 
 /// One recording: waveform, transport and the list of markers and regions.
 /// Every change goes straight to the library, as on the desktop.
@@ -366,7 +367,12 @@ class _EditorPageState extends State<EditorPage>
   Future<void> _makeRegion() async {
     final sel = _selection;
     if (sel == null) {
-      _toast('Сначала выделите участок: долгое нажатие на волне и ведите');
+      _toast(
+        tr(
+          'Сначала выделите участок: долгое нажатие на волне и ведите',
+          'Select a stretch first: long-press the wave and drag',
+        ),
+      );
       return;
     }
     int? created;
@@ -421,21 +427,23 @@ class _EditorPageState extends State<EditorPage>
     final alias = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Имя записи'),
+        title: Text(tr('Имя записи', 'Recording name')),
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(hintText: 'Пусто — имя файла'),
+          decoration: InputDecoration(
+            hintText: tr('Пусто — имя файла', 'Empty — the file name'),
+          ),
           onSubmitted: (v) => Navigator.pop(context, v),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена'),
+            child: Text(tr('Отмена', 'Cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, controller.text),
-            child: const Text('Сохранить'),
+            child: Text(tr('Сохранить', 'Save')),
           ),
         ],
       ),
@@ -683,11 +691,16 @@ class _EditorPageState extends State<EditorPage>
           children: [
             const Icon(Icons.library_music_outlined, size: 56),
             const SizedBox(height: 12),
-            const Text('Откройте запись в боковой панели'),
+            Text(
+              tr(
+                'Откройте запись в боковой панели',
+                'Open a recording from the side panel',
+              ),
+            ),
             const SizedBox(height: 16),
             FilledButton.icon(
               icon: const Icon(Icons.folder_open),
-              label: const Text('Файлы'),
+              label: Text(tr('Файлы', 'Files')),
               onPressed: () => _scaffold.currentState?.openDrawer(),
             ),
           ],
@@ -705,14 +718,20 @@ class _EditorPageState extends State<EditorPage>
               const Icon(Icons.usb_off, size: 56),
               const SizedBox(height: 12),
               Text(
-                'Запись $name сейчас недоступна',
+                tr(
+                  'Запись $name сейчас недоступна',
+                  '$name is not available now',
+                ),
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 8),
-              const Text(
-                'Подключите носитель — она откроется сама. Разметка '
-                'сохранена в приложении.',
+              Text(
+                tr(
+                  'Подключите носитель — она откроется сама. Разметка '
+                      'сохранена в приложении.',
+                  'Connect the volume and it opens by itself. The markup is kept in the app.',
+                ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
@@ -722,12 +741,12 @@ class _EditorPageState extends State<EditorPage>
                 children: [
                   OutlinedButton.icon(
                     icon: const Icon(Icons.refresh),
-                    label: const Text('Проверить'),
+                    label: Text(tr('Проверить', 'Check')),
                     onPressed: _load,
                   ),
                   FilledButton.icon(
                     icon: const Icon(Icons.folder_open),
-                    label: const Text('Другая запись'),
+                    label: Text(tr('Другая запись', 'Another recording')),
                     onPressed: () => _scaffold.currentState?.openDrawer(),
                   ),
                 ],
@@ -765,7 +784,9 @@ class _EditorPageState extends State<EditorPage>
                 [
                   '${info.sampleRate ~/ 1000} kHz',
                   info.encoding,
-                  info.channels == 1 ? 'моно' : 'стерео',
+                  info.channels == 1
+                      ? tr('моно', 'mono')
+                      : tr('стерео', 'stereo'),
                   formatTime(info.totalFrames / info.sampleRate, millis: false),
                   if (info.recordedAt != null) info.recordedAt!,
                 ].join(' · '),
@@ -777,18 +798,20 @@ class _EditorPageState extends State<EditorPage>
         ),
         actions: [
           IconButton(
-            tooltip: 'Отменить',
+            tooltip: tr('Отменить', 'Undo'),
             icon: const Icon(Icons.undo),
             onPressed: markup.canUndo ? () => _run(() => engine.undo()) : null,
           ),
           IconButton(
-            tooltip: 'Повторить',
+            tooltip: tr('Повторить', 'Redo'),
             icon: const Icon(Icons.redo),
             onPressed: markup.canRedo ? () => _run(() => engine.redo()) : null,
           ),
           if (landscape)
             IconButton(
-              tooltip: _listOpen ? 'Скрыть список' : 'Маркеры и регионы',
+              tooltip: _listOpen
+                  ? tr('Скрыть список', 'Hide the list')
+                  : tr('Маркеры и регионы', 'Markers and regions'),
               isSelected: _listOpen,
               icon: const Icon(Icons.view_sidebar_outlined),
               selectedIcon: const Icon(Icons.view_sidebar),
@@ -847,7 +870,7 @@ class _EditorPageState extends State<EditorPage>
                           child: _floatingTransport(),
                         )
                       : FloatingActionButton.small(
-                          tooltip: 'Показать управление',
+                          tooltip: tr('Показать управление', 'Show controls'),
                           onPressed: () => setState(() => _controlsOpen = true),
                           child: const Icon(Icons.play_arrow),
                         ),
@@ -886,12 +909,15 @@ class _EditorPageState extends State<EditorPage>
               ),
             ),
             IconButton(
-              tooltip: 'В начало',
+              tooltip: tr('В начало', 'To start'),
               icon: const Icon(Icons.skip_previous),
               onPressed: () => _seek(_loopRange?.$1 ?? 0),
             ),
             IconButton(
-              tooltip: 'Цикл выделения или региона',
+              tooltip: tr(
+                'Цикл выделения или региона',
+                'Loop the selection or region',
+              ),
               isSelected: _loop,
               icon: const Icon(Icons.repeat),
               selectedIcon: const Icon(Icons.repeat_on),
@@ -905,18 +931,18 @@ class _EditorPageState extends State<EditorPage>
               onPressed: _togglePlay,
             ),
             IconButton(
-              tooltip: 'Маркер',
+              tooltip: tr('Маркер', 'Marker'),
               icon: const Icon(Icons.flag_outlined),
               onPressed: _addMarker,
             ),
             IconButton(
-              tooltip: 'Регион из выделения',
+              tooltip: tr('Регион из выделения', 'Region from selection'),
               icon: const Icon(Icons.crop_free),
               onPressed: _makeRegion,
             ),
             _zoomSlider(width: 140),
             IconButton(
-              tooltip: 'Спрятать управление',
+              tooltip: tr('Спрятать управление', 'Hide controls'),
               icon: const Icon(Icons.expand_more),
               onPressed: () => setState(() => _controlsOpen = false),
             ),
@@ -949,7 +975,7 @@ class _EditorPageState extends State<EditorPage>
     return Scaffold(
       key: _scaffold,
       drawer: _drawer(),
-      appBar: AppBar(title: const Text('Разметка')),
+      appBar: AppBar(title: Text(tr('Разметка', 'Markup'))),
       body: Center(child: body),
     );
   }
@@ -1053,11 +1079,19 @@ class _EditorPageState extends State<EditorPage>
     final r = _selectedRegion;
     String detail;
     if (sel != null) {
-      detail = 'выделено ${formatTime((sel.$2 - sel.$1) / _rate)}';
+      detail = tr(
+        'выделено ${formatTime((sel.$2 - sel.$1) / _rate)}',
+        'selected ${formatTime((sel.$2 - sel.$1) / _rate)}',
+      );
     } else if (r != null) {
-      detail = r.name.isEmpty ? 'регион' : r.name;
+      detail = r.name.isEmpty ? tr('регион', 'region') : r.name;
     } else {
-      detail = _peaksDone < 1 ? 'волна: ${(_peaksDone * 100).floor()} %' : '';
+      detail = _peaksDone < 1
+          ? tr(
+              'волна: ${(_peaksDone * 100).floor()} %',
+              'waveform: ${(_peaksDone * 100).floor()} %',
+            )
+          : '';
     }
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
@@ -1081,8 +1115,8 @@ class _EditorPageState extends State<EditorPage>
                 ),
               ),
               if (!engine.hasAudioOutput())
-                const Tooltip(
-                  message: 'Нет вывода звука',
+                Tooltip(
+                  message: tr('Нет вывода звука', 'No audio output'),
                   child: Icon(Icons.volume_off),
                 ),
             ],
@@ -1091,12 +1125,15 @@ class _EditorPageState extends State<EditorPage>
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               IconButton(
-                tooltip: 'В начало',
+                tooltip: tr('В начало', 'To start'),
                 icon: const Icon(Icons.skip_previous),
                 onPressed: () => _seek(_loopRange?.$1 ?? 0),
               ),
               IconButton(
-                tooltip: 'Цикл выделения или региона',
+                tooltip: tr(
+                  'Цикл выделения или региона',
+                  'Loop the selection or region',
+                ),
                 isSelected: _loop,
                 icon: const Icon(Icons.repeat),
                 selectedIcon: const Icon(Icons.repeat_on),
@@ -1113,12 +1150,12 @@ class _EditorPageState extends State<EditorPage>
               TextButton.icon(
                 onPressed: _addMarker,
                 icon: const Icon(Icons.flag_outlined),
-                label: const Text('Маркер'),
+                label: Text(tr('Маркер', 'Marker')),
               ),
               TextButton.icon(
                 onPressed: _makeRegion,
                 icon: const Icon(Icons.crop_free),
-                label: const Text('Регион'),
+                label: Text(tr('Регион', 'Region')),
               ),
             ],
           ),
@@ -1134,7 +1171,7 @@ class _EditorPageState extends State<EditorPage>
       final len = (r.end - r.start) / _rate;
       final speed = r.speed == 100
           ? ''
-          : ' → ${(len * 100 / r.speed).toStringAsFixed(2)} с (×${_speed(r.speed)}${r.keepPitch ? ', тон' : ''})';
+          : ' → ${(len * 100 / r.speed).toStringAsFixed(2)} $sec (×${_speed(r.speed)}${r.keepPitch ? tr(', тон', ', pitch kept') : ''})';
       items.add((
         r.start,
         ListTile(
@@ -1144,10 +1181,10 @@ class _EditorPageState extends State<EditorPage>
             Icons.square,
             color: _palette[r.color % _palette.length],
           ),
-          title: Text(r.name.isEmpty ? 'Без имени' : r.name),
+          title: Text(r.name.isEmpty ? tr('Без имени', 'Untitled') : r.name),
           subtitle: Text(
-            '${formatTime(r.start / _rate)} · ${len.toStringAsFixed(2)} с$speed'
-            '${r.export_ ? '' : ' · не в экспорт'}',
+            '${formatTime(r.start / _rate)} · ${len.toStringAsFixed(2)} $sec$speed'
+            '${r.export_ ? '' : tr(' · не в экспорт', ' · not exported')}',
           ),
           trailing: IconButton(
             icon: const Icon(Icons.tune),
@@ -1172,7 +1209,7 @@ class _EditorPageState extends State<EditorPage>
             Icons.flag,
             color: _palette[mk.color % _palette.length],
           ),
-          title: Text(mk.name.isEmpty ? 'Маркер' : mk.name),
+          title: Text(mk.name.isEmpty ? tr('Маркер', 'Marker') : mk.name),
           subtitle: Text(formatTime(mk.pos / _rate)),
           trailing: IconButton(
             icon: const Icon(Icons.tune),
@@ -1187,12 +1224,15 @@ class _EditorPageState extends State<EditorPage>
       ));
     }
     if (items.isEmpty) {
-      return const Center(
+      return Center(
         child: Padding(
           padding: EdgeInsets.all(24),
           child: Text(
-            'Долгое нажатие на волне и ведите — выделение. Потом «Регион».\n'
-            'Щипок — масштаб, двойное касание — весь файл.',
+            tr(
+              'Долгое нажатие на волне и ведите — выделение. Потом «Регион».\n'
+                  'Щипок — масштаб, двойное касание — весь файл.',
+              'Long-press the wave and drag to select, then tap Region.\nPinch to zoom, double tap for the whole file.',
+            ),
             textAlign: TextAlign.center,
           ),
         ),

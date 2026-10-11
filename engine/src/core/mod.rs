@@ -24,6 +24,21 @@ pub const PALETTE: [(&str, [u8; 3]); 8] = [
 ];
 
 /// Colour for markers imported from the recorder.
+/// English colour names, in palette order.
+const PALETTE_EN: [&str; 8] = [
+    "red", "orange", "yellow", "green", "teal", "blue", "purple", "pink",
+];
+
+/// Name of palette colour `i` in the interface language.
+pub fn color_name(i: usize) -> &'static str {
+    let i = i % PALETTE.len();
+    if crate::lang::is_russian() {
+        PALETTE[i].0
+    } else {
+        PALETTE_EN[i]
+    }
+}
+
 pub const RECORDER_MARK_COLOR: ColorIdx = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

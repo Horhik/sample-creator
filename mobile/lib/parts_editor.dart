@@ -8,6 +8,7 @@ import 'src/rust/api/engine.dart' as engine;
 import 'src/rust/api/review.dart' as api;
 import 'timeline.dart';
 import 'waveform.dart';
+import 'l10n.dart';
 
 /// Full-screen cutting on the output timeline: parts laid end to end on two
 /// lanes. Long-press a part to lift and slide it over the previous one (or
@@ -325,7 +326,12 @@ class _PartsEditorPageState extends State<PartsEditorPage>
       // The first part always starts the result.
       HapticFeedback.lightImpact();
       setState(() => _selected = 0);
-      _toast('Первая часть всегда в начале — двигайте следующие');
+      _toast(
+        tr(
+          'Первая часть всегда в начале — двигайте следующие',
+          'The first part always starts the result — move the others',
+        ),
+      );
       return;
     }
     HapticFeedback.heavyImpact();
@@ -362,7 +368,7 @@ class _PartsEditorPageState extends State<PartsEditorPage>
       _dragClip = _dragFrom = null;
       return;
     }
-    int ms(int frames) => (frames * 1000 / r.sampleRate).round();
+    int toMs(int frames) => (frames * 1000 / r.sampleRate).round();
     Future<void> commit() async {
       switch (drag) {
         case _Drag.move:
@@ -378,8 +384,8 @@ class _PartsEditorPageState extends State<PartsEditorPage>
           await api.setPartFades(
             id: r.id,
             index: sel,
-            fadeInMs: ms(c.fadeIn),
-            fadeOutMs: ms(c.fadeOut),
+            fadeInMs: toMs(c.fadeIn),
+            fadeOutMs: toMs(c.fadeOut),
           );
         default:
           break;
@@ -396,12 +402,21 @@ class _PartsEditorPageState extends State<PartsEditorPage>
   Future<void> _cut() async {
     final at = _cursor;
     if (at == null) {
-      _toast('Коснитесь ленты там, где резать');
+      _toast(
+        tr('Коснитесь ленты там, где резать', 'Tap the timeline where to cut'),
+      );
       return;
     }
     var done = false;
     await _edit(() async => done = await api.splitAtOutput(id: _r!.id, t: at));
-    if (!done) _toast('Под курсором нет части или это её край');
+    if (!done) {
+      _toast(
+        tr(
+          'Под курсором нет части или это её край',
+          'No part under the cursor, or it is an edge',
+        ),
+      );
+    }
   }
 
   Future<void> _properties(int i) async {
@@ -416,7 +431,12 @@ class _PartsEditorPageState extends State<PartsEditorPage>
     try {
       final id = redo ? await api.processingRedo() : await api.processingUndo();
       if (id != null && id != widget.regionId) {
-        _toast('Отменено действие в другом регионе');
+        _toast(
+          tr(
+            'Отменено действие в другом регионе',
+            'Undid a change in another region',
+          ),
+        );
       }
     } catch (e) {
       _toast(friendlyError(e));
@@ -443,15 +463,15 @@ class _PartsEditorPageState extends State<PartsEditorPage>
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(r.name.isEmpty ? 'Нарезка' : r.name),
+        title: Text(r.name.isEmpty ? tr('Нарезка', 'Cutting') : r.name),
         actions: [
           IconButton(
-            tooltip: 'Отменить',
+            tooltip: tr('Отменить', 'Undo'),
             icon: const Icon(Icons.undo),
             onPressed: api.processingCanUndo() ? () => _undo(false) : null,
           ),
           IconButton(
-            tooltip: 'Повторить',
+            tooltip: tr('Повторить', 'Redo'),
             icon: const Icon(Icons.redo),
             onPressed: api.processingCanRedo() ? () => _undo(true) : null,
           ),
@@ -471,8 +491,8 @@ class _PartsEditorPageState extends State<PartsEditorPage>
                   ),
                   const Spacer(),
                   Text(
-                    'результат ${(total / r.sampleRate).toStringAsFixed(2)} с'
-                    '${r.speed == 100 ? '' : ' (до смены скорости)'}',
+                    '${tr('результат', 'result')} ${(total / r.sampleRate).toStringAsFixed(2)} $sec'
+                    '${r.speed == 100 ? '' : tr(' (до смены скорости)', ' (before the speed change)')}',
                     style: theme.textTheme.bodySmall,
                   ),
                   const Spacer(),
@@ -539,7 +559,7 @@ class _PartsEditorPageState extends State<PartsEditorPage>
     final sel = _selected;
     final count = r.parts.length;
     final p = sel == null ? null : r.parts[sel];
-    int ms(int frames) => (frames * 1000 / r.sampleRate).round();
+    int toMs(int frames) => (frames * 1000 / r.sampleRate).round();
     return Material(
       elevation: 2,
       child: Padding(
@@ -553,10 +573,13 @@ class _PartsEditorPageState extends State<PartsEditorPage>
                   child: Text(
                     [
                       if (_cursor != null)
-                        'курсор ${formatTime(_cursor! / r.sampleRate)}',
+                        tr(
+                          'курсор ${formatTime(_cursor! / r.sampleRate)}',
+                          'cursor ${formatTime(_cursor! / r.sampleRate)}',
+                        ),
                       if (p != null)
-                        'часть ${sel! + 1}: ${((p.end - p.start) / r.sampleRate).toStringAsFixed(3)} с, '
-                            'фейды ${ms(p.fadeIn)}/${ms(p.fadeOut)} мс'
+                        '${tr('часть', 'part')} ${sel! + 1}: ${((p.end - p.start) / r.sampleRate).toStringAsFixed(3)} $sec, '
+                            '${tr('фейды', 'fades')} ${toMs(p.fadeIn)}/${toMs(p.fadeOut)} $ms'
                             '${overlapNote(r, sel)}',
                     ].join(' · '),
                     style: theme.textTheme.bodySmall,
@@ -565,17 +588,17 @@ class _PartsEditorPageState extends State<PartsEditorPage>
                   ),
                 ),
                 IconButton(
-                  tooltip: 'Отдалить',
+                  tooltip: tr('Отдалить', 'Zoom out'),
                   icon: const Icon(Icons.zoom_out),
                   onPressed: () => _zoom(0.5),
                 ),
                 IconButton(
-                  tooltip: 'Всё',
+                  tooltip: tr('Всё', 'All'),
                   icon: const Icon(Icons.fit_screen),
                   onPressed: _fit,
                 ),
                 IconButton(
-                  tooltip: 'Приблизить',
+                  tooltip: tr('Приблизить', 'Zoom in'),
                   icon: const Icon(Icons.zoom_in),
                   onPressed: () => _zoom(2, around: _cursor?.toDouble()),
                 ),
@@ -588,7 +611,7 @@ class _PartsEditorPageState extends State<PartsEditorPage>
                     icon: Icon(
                       _play == _Play.original ? Icons.stop : Icons.play_arrow,
                     ),
-                    label: const Text('Оригинал'),
+                    label: Text(tr('Оригинал', 'Original')),
                     onPressed: _playOriginal,
                   ),
                 ),
@@ -606,13 +629,13 @@ class _PartsEditorPageState extends State<PartsEditorPage>
                                 ? Icons.stop
                                 : Icons.play_arrow,
                           ),
-                    label: const Text('Результат'),
+                    label: Text(tr('Результат', 'Result')),
                     onPressed: _play == _Play.rendering ? null : _playResult,
                   ),
                 ),
                 const SizedBox(width: 8),
                 IconButton.filled(
-                  tooltip: 'Разрезать в курсоре',
+                  tooltip: tr('Разрезать в курсоре', 'Cut at cursor'),
                   icon: const Icon(Icons.content_cut),
                   onPressed: _cut,
                 ),
@@ -623,7 +646,7 @@ class _PartsEditorPageState extends State<PartsEditorPage>
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   IconButton(
-                    tooltip: 'Раньше',
+                    tooltip: tr('Раньше', 'Earlier'),
                     icon: const Icon(Icons.arrow_back),
                     onPressed: sel > 0
                         ? () async {
@@ -636,7 +659,7 @@ class _PartsEditorPageState extends State<PartsEditorPage>
                         : null,
                   ),
                   IconButton(
-                    tooltip: 'Позже',
+                    tooltip: tr('Позже', 'Later'),
                     icon: const Icon(Icons.arrow_forward),
                     onPressed: sel + 1 < count
                         ? () async {
@@ -650,7 +673,7 @@ class _PartsEditorPageState extends State<PartsEditorPage>
                   ),
                   TextButton.icon(
                     icon: const Icon(Icons.tune),
-                    label: const Text('Точно…'),
+                    label: Text(tr('Точно…', 'Exact…')),
                     onPressed: () => _properties(sel),
                   ),
                   TextButton.icon(
@@ -658,7 +681,7 @@ class _PartsEditorPageState extends State<PartsEditorPage>
                       foregroundColor: theme.colorScheme.error,
                     ),
                     icon: const Icon(Icons.delete_outline),
-                    label: const Text('Убрать'),
+                    label: Text(tr('Убрать', 'Remove')),
                     onPressed: count > 1
                         ? () async {
                             await _edit(
@@ -674,9 +697,12 @@ class _PartsEditorPageState extends State<PartsEditorPage>
               Padding(
                 padding: const EdgeInsets.only(top: 6),
                 child: Text(
-                  'Касание — курсор и выбор части. Долгое нажатие на часть — '
-                  'двигать её (наложение или пауза). У выбранной части края — '
-                  'подрезка, кружки сверху — фейды. Щипок — масштаб.',
+                  tr(
+                    'Касание — курсор и выбор части. Долгое нажатие на часть — '
+                        'двигать её (наложение или пауза). У выбранной части края — '
+                        'подрезка, кружки сверху — фейды. Щипок — масштаб.',
+                    'Tap — cursor and pick a part. Long-press a part to move it (overlap or pause). On the picked part the edges trim and the top circles fade. Pinch to zoom.',
+                  ),
                   style: theme.textTheme.bodySmall,
                   textAlign: TextAlign.center,
                 ),

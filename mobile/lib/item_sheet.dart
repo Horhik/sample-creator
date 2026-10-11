@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'src/rust/api/engine.dart' as engine;
 import 'waveform.dart';
+import 'l10n.dart';
 
 /// Name, colour and, for a region, the export flag. Each change is saved at once.
 /// Speed lives on the processing page, as on the desktop.
@@ -93,7 +94,9 @@ class _ItemSheetState extends State<ItemSheet> {
               autofocus: widget.focusName,
               textCapitalization: TextCapitalization.sentences,
               decoration: InputDecoration(
-                labelText: _isRegion ? 'Имя региона' : 'Имя маркера',
+                labelText: _isRegion
+                    ? tr('Имя региона', 'Region name')
+                    : tr('Имя маркера', 'Marker name'),
                 border: const OutlineInputBorder(),
               ),
               onSubmitted: (_) {
@@ -135,7 +138,7 @@ class _ItemSheetState extends State<ItemSheet> {
                   foregroundColor: Theme.of(context).colorScheme.error,
                 ),
                 icon: const Icon(Icons.delete_outline),
-                label: const Text('Удалить'),
+                label: Text(tr('Удалить', 'Delete')),
                 onPressed: () async {
                   await engine.delete(kind: _kind, id: widget.item.id);
                   widget.onChanged(null);
@@ -154,7 +157,7 @@ class _ItemSheetState extends State<ItemSheet> {
       const SizedBox(height: 8),
       SwitchListTile(
         contentPadding: EdgeInsets.zero,
-        title: const Text('В экспорт'),
+        title: Text(tr('В экспорт', 'Export')),
         value: r.export_,
         onChanged: (v) =>
             _do(() => engine.setRegionExport(id: r.id, export_: v)),

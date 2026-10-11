@@ -8,6 +8,7 @@ import 'src/rust/api/engine.dart' as engine;
 import 'src/rust/api/review.dart' as api;
 import 'timeline.dart';
 import 'waveform.dart';
+import 'l10n.dart';
 
 /// Per-region processing, as on the desktop: all regions in a list, the
 /// selected one's settings on top: speed, and cutting into parts that are
@@ -127,12 +128,24 @@ class _ProcessingPageState extends State<ProcessingPage> {
   Future<void> _cut(api.ReviewRegion r) async {
     final at = _cursor;
     if (at == null) {
-      _toast('Сначала коснитесь ленты там, где резать');
+      _toast(
+        tr(
+          'Сначала коснитесь ленты там, где резать',
+          'Tap the timeline where to cut first',
+        ),
+      );
       return;
     }
     var done = false;
     await _edit(() async => done = await api.splitAtOutput(id: r.id, t: at));
-    if (!done) _toast('Под курсором нет части или это её край');
+    if (!done) {
+      _toast(
+        tr(
+          'Под курсором нет части или это её край',
+          'No part under the cursor, or it is an edge',
+        ),
+      );
+    }
   }
 
   Future<void> _editFades(api.ReviewRegion r, int index) async {
@@ -165,7 +178,12 @@ class _ProcessingPageState extends State<ProcessingPage> {
     }
     _stop();
     if (!r.available) {
-      _toast('Запись недоступна. Подключите рекордер');
+      _toast(
+        tr(
+          'Запись недоступна. Подключите рекордер',
+          'The recording is not available. Connect the recorder',
+        ),
+      );
       return;
     }
     if (!result) {
@@ -212,26 +230,29 @@ class _ProcessingPageState extends State<ProcessingPage> {
     final r = _region;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Обработка'),
+        title: Text(tr('Обработка', 'Processing')),
         actions: [
           IconButton(
-            tooltip: 'Отменить',
+            tooltip: tr('Отменить', 'Undo'),
             icon: const Icon(Icons.undo),
             onPressed: api.processingCanUndo() ? () => _undo(false) : null,
           ),
           IconButton(
-            tooltip: 'Повторить',
+            tooltip: tr('Повторить', 'Redo'),
             icon: const Icon(Icons.redo),
             onPressed: api.processingCanRedo() ? () => _undo(true) : null,
           ),
         ],
       ),
       body: _rows.isEmpty
-          ? const Center(
+          ? Center(
               child: Padding(
                 padding: EdgeInsets.all(24),
                 child: Text(
-                  'Регионов пока нет. Создайте их во вкладке «Разметка».',
+                  tr(
+                    'Регионов пока нет. Создайте их во вкладке «Разметка».',
+                    'No regions yet. Make them on the Markup page.',
+                  ),
                   textAlign: TextAlign.center,
                 ),
               ),
@@ -246,7 +267,10 @@ class _ProcessingPageState extends State<ProcessingPage> {
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                     child: Text(
-                      'Выберите регион: скорость, нарезка и склейка.',
+                      tr(
+                        'Выберите регион: скорость, нарезка и склейка.',
+                        'Pick a region: speed, cutting and splicing.',
+                      ),
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ),
@@ -274,7 +298,7 @@ class _ProcessingPageState extends State<ProcessingPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      r.name.isEmpty ? 'Без имени' : r.name,
+                      r.name.isEmpty ? tr('Без имени', 'Untitled') : r.name,
                       style: theme.textTheme.titleLarge,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -289,7 +313,7 @@ class _ProcessingPageState extends State<ProcessingPage> {
                 ),
               ),
               IconButton(
-                tooltip: 'Закрыть',
+                tooltip: tr('Закрыть', 'Close'),
                 icon: const Icon(Icons.close),
                 onPressed: () {
                   _stop();
@@ -306,12 +330,18 @@ class _ProcessingPageState extends State<ProcessingPage> {
           Row(
             children: [
               Text(
-                'Скорость ×${(speed / 100).toStringAsFixed(2)}',
+                tr(
+                  'Скорость ×${(speed / 100).toStringAsFixed(2)}',
+                  'Speed ×${(speed / 100).toStringAsFixed(2)}',
+                ),
                 style: theme.textTheme.titleMedium,
               ),
               const Spacer(),
               Text(
-                '${len.toStringAsFixed(2)} с → ${out.toStringAsFixed(2)} с',
+                tr(
+                  '${len.toStringAsFixed(2)} с → ${out.toStringAsFixed(2)} с',
+                  '${len.toStringAsFixed(2)} s → ${out.toStringAsFixed(2)} s',
+                ),
                 style: theme.textTheme.titleMedium,
               ),
             ],
@@ -340,11 +370,14 @@ class _ProcessingPageState extends State<ProcessingPage> {
           ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
-            title: const Text('Сохранять тон'),
+            title: Text(tr('Сохранять тон', 'Keep pitch')),
             subtitle: Text(
               r.keepPitch
-                  ? 'Меняется только темп'
-                  : 'Как пластинка: быстрее — значит выше',
+                  ? tr('Меняется только темп', 'Only the tempo changes')
+                  : tr(
+                      'Как пластинка: быстрее — значит выше',
+                      'Like a record: faster is higher',
+                    ),
             ),
             value: r.keepPitch,
             onChanged: (v) => _setSpeed(r, speed, v),
@@ -358,7 +391,7 @@ class _ProcessingPageState extends State<ProcessingPage> {
                         ? Icons.stop
                         : Icons.play_arrow,
                   ),
-                  label: const Text('Оригинал'),
+                  label: Text(tr('Оригинал', 'Original')),
                   onPressed: () => _play(r, result: false),
                 ),
               ),
@@ -376,7 +409,7 @@ class _ProcessingPageState extends State<ProcessingPage> {
                               ? Icons.stop
                               : Icons.play_arrow,
                         ),
-                  label: const Text('Результат'),
+                  label: Text(tr('Результат', 'Result')),
                   onPressed: _preview == _Preview.rendering
                       ? null
                       : () => _play(r, result: true),
@@ -402,21 +435,24 @@ class _ProcessingPageState extends State<ProcessingPage> {
             children: [
               Expanded(
                 child: Text(
-                  'Нарезка и склейка',
+                  tr('Нарезка и склейка', 'Cut and splice'),
                   style: theme.textTheme.titleMedium,
                 ),
               ),
               IconButton.filledTonal(
-                tooltip: 'Подробный режим',
+                tooltip: tr('Подробный режим', 'Full screen'),
                 icon: const Icon(Icons.open_in_full),
                 onPressed: () => _openEditor(r),
               ),
             ],
           ),
           Text(
-            'Лента результата: части подряд, по очереди сверху и снизу. '
-            'Коснитесь, где резать. Сдвиги, подрезка и фейды пальцем — в '
-            'подробном режиме.',
+            tr(
+              'Лента результата: части подряд, по очереди сверху и снизу. '
+                  'Коснитесь, где резать. Сдвиги, подрезка и фейды пальцем — в '
+                  'подробном режиме.',
+              'The result timeline: parts in a row, alternating top and bottom. Tap where to cut. Moving, trimming and fades by finger are in full screen.',
+            ),
             style: theme.textTheme.bodySmall,
           ),
           const SizedBox(height: 8),
@@ -467,7 +503,7 @@ class _ProcessingPageState extends State<ProcessingPage> {
             children: [
               FilledButton.tonalIcon(
                 icon: const Icon(Icons.content_cut),
-                label: const Text('Разрезать'),
+                label: Text(tr('Разрезать', 'Cut')),
                 onPressed: () => _cut(r),
               ),
               const SizedBox(width: 8),
@@ -475,7 +511,7 @@ class _ProcessingPageState extends State<ProcessingPage> {
                 onPressed: r.edited
                     ? () => _edit(() => api.resetParts(id: r.id))
                     : null,
-                child: const Text('Сбросить'),
+                child: Text(tr('Сбросить', 'Reset')),
               ),
             ],
           ),
@@ -489,7 +525,7 @@ class _ProcessingPageState extends State<ProcessingPage> {
   Widget _partTile(api.ReviewRegion r, int i) {
     final p = r.parts[i];
     String t(int f) => formatTime((f - r.start) / r.sampleRate);
-    int ms(int frames) => (frames * 1000 / r.sampleRate).round();
+    int toMs(int frames) => (frames * 1000 / r.sampleRate).round();
     final count = r.parts.length;
     return ListTile(
       contentPadding: EdgeInsets.zero,
@@ -498,10 +534,10 @@ class _ProcessingPageState extends State<ProcessingPage> {
       leading: CircleAvatar(radius: 14, child: Text('${i + 1}')),
       title: Text(
         '${t(p.start)}–${t(p.end)} · '
-        '${((p.end - p.start) / r.sampleRate).toStringAsFixed(2)} с',
+        '${((p.end - p.start) / r.sampleRate).toStringAsFixed(2)} $sec',
       ),
       subtitle: Text(
-        'fade in ${ms(p.fadeIn)} мс · out ${ms(p.fadeOut)} мс'
+        'fade in ${toMs(p.fadeIn)} $ms · out ${toMs(p.fadeOut)} $ms'
         '${overlapNote(r, i)}',
       ),
       onTap: () => _editFades(r, i),
@@ -519,24 +555,24 @@ class _ProcessingPageState extends State<ProcessingPage> {
           }
         },
         itemBuilder: (_) => [
-          const PopupMenuItem(
+          PopupMenuItem(
             value: 'fades',
-            child: Text('Фейды и наложение…'),
+            child: Text(tr('Фейды и наложение…', 'Fades and overlap…')),
           ),
           PopupMenuItem(
             value: 'up',
             enabled: i > 0,
-            child: const Text('Раньше'),
+            child: Text(tr('Раньше', 'Earlier')),
           ),
           PopupMenuItem(
             value: 'down',
             enabled: i + 1 < count,
-            child: const Text('Позже'),
+            child: Text(tr('Позже', 'Later')),
           ),
           PopupMenuItem(
             value: 'remove',
             enabled: count > 1,
-            child: const Text('Убрать часть'),
+            child: Text(tr('Убрать часть', 'Remove part')),
           ),
         ],
       ),
@@ -552,9 +588,9 @@ class _ProcessingPageState extends State<ProcessingPage> {
             Icons.square,
             color: _palette[r.color % _palette.length],
           ),
-          title: Text(r.name.isEmpty ? 'Без имени' : r.name),
+          title: Text(r.name.isEmpty ? tr('Без имени', 'Untitled') : r.name),
           subtitle: Text(
-            '${r.fileTitle} · ${((r.end - r.start) / r.sampleRate).toStringAsFixed(2)} с'
+            '${r.fileTitle} · ${((r.end - r.start) / r.sampleRate).toStringAsFixed(2)} $sec'
             '${regionNote(r)}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,

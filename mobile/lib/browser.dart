@@ -8,6 +8,7 @@ import 'src/rust/api/review.dart' as review_api;
 import 'src/rust/api/sync.dart' as sync;
 import 'display.dart';
 import 'sync_ui.dart';
+import 'l10n.dart';
 import 'waveform.dart' show friendlyError;
 
 const _storage = MethodChannel('sample_creator/storage');
@@ -56,13 +57,16 @@ Future<List<Volume>> storageVolumes() async {
       final name = e.path.split('/').last;
       if (name == 'emulated' || name == 'self') continue;
       if (volumes.any((v) => v.path == e.path)) continue;
-      volumes.add(Volume('Носитель $name', e.path, true));
+      volumes.add(Volume(tr('Носитель $name', 'Volume $name'), e.path, true));
     }
   } on FileSystemException {
     // Not listable on many devices.
   }
   if (!volumes.any((v) => v.path == '/storage/emulated/0')) {
-    volumes.insert(0, const Volume('Телефон', '/storage/emulated/0', false));
+    volumes.insert(
+      0,
+      Volume(tr('Телефон', 'Phone'), '/storage/emulated/0', false),
+    );
   }
   return volumes;
 }
@@ -99,8 +103,8 @@ class FileBrowser extends StatefulWidget {
 }
 
 class FileBrowserState extends State<FileBrowser> {
-  List<Volume> _volumes = const [
-    Volume('Телефон', '/storage/emulated/0', false),
+  List<Volume> _volumes = [
+    Volume(tr('Телефон', 'Phone'), '/storage/emulated/0', false),
   ];
   String? _dir;
   List<engine.Entry> _entries = [];
@@ -195,12 +199,12 @@ class FileBrowserState extends State<FileBrowser> {
           leading: dir == null
               ? const Icon(Icons.storage)
               : IconButton(
-                  tooltip: 'Вверх',
+                  tooltip: tr('Вверх', 'Up'),
                   icon: const Icon(Icons.arrow_upward),
                   onPressed: up,
                 ),
           title: Text(
-            dir == null ? 'Носители' : dir.split('/').last,
+            dir == null ? tr('Носители', 'Volumes') : dir.split('/').last,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.titleMedium,
           ),
@@ -208,7 +212,7 @@ class FileBrowserState extends State<FileBrowser> {
               ? null
               : Text(dir, overflow: TextOverflow.ellipsis, maxLines: 1),
           trailing: IconButton(
-            tooltip: 'Обновить',
+            tooltip: tr('Обновить', 'Refresh'),
             icon: const Icon(Icons.refresh),
             onPressed: dir == null ? _loadVolumes : refresh,
           ),
@@ -229,12 +233,18 @@ class FileBrowserState extends State<FileBrowser> {
             subtitle: Text(
               sync.syncInfo(root: v.path) == null
                   ? v.path
-                  : '${v.path} · разметка на носителе',
+                  : tr(
+                      '${v.path} · разметка на носителе',
+                      '${v.path} · markup on the volume',
+                    ),
             ),
             onTap: () => open(v.path),
             onLongPress: () => _volumeMenu(v),
             trailing: IconButton(
-              tooltip: 'Файл разметки на носителе',
+              tooltip: tr(
+                'Файл разметки на носителе',
+                'Markup file on the volume',
+              ),
               icon: Icon(
                 sync.syncInfo(root: v.path) == null
                     ? Icons.more_vert
@@ -243,23 +253,48 @@ class FileBrowserState extends State<FileBrowser> {
               onPressed: () => _volumeMenu(v),
             ),
           ),
-        const Padding(
+        Padding(
           padding: EdgeInsets.all(16),
           child: Text(
-            'Рекордер по USB появится здесь, когда Android его подключит: '
-            'на рекордере выберите режим накопителя (STORAGE).',
+            tr(
+              'Рекордер по USB появится здесь, когда Android его подключит: '
+                  'на рекордере выберите режим накопителя (STORAGE).',
+              'A recorder on USB shows up here once Android mounts it: set the recorder to storage mode.',
+            ),
             style: TextStyle(fontSize: 12),
           ),
         ),
         if (widget.showSettings) ...[
           const Divider(),
           ValueListenableBuilder(
+            valueListenable: language,
+            builder: (context, choice, _) => ListTile(
+              leading: const Icon(Icons.translate),
+              title: Text(tr('Язык', 'Language')),
+              trailing: DropdownButton<String>(
+                value: choice,
+                onChanged: (v) => setLanguage(v ?? 'system'),
+                items: [
+                  DropdownMenuItem(
+                    value: 'system',
+                    child: Text(tr('Как в системе', 'System')),
+                  ),
+                  const DropdownMenuItem(value: 'en', child: Text('English')),
+                  const DropdownMenuItem(value: 'ru', child: Text('Русский')),
+                ],
+              ),
+            ),
+          ),
+          ValueListenableBuilder(
             valueListenable: fullscreen,
             builder: (context, on, _) => SwitchListTile(
               secondary: const Icon(Icons.fullscreen),
-              title: const Text('Полноэкранный режим'),
-              subtitle: const Text(
-                'Скрыть строку состояния и системные кнопки',
+              title: Text(tr('Полноэкранный режим', 'Full screen')),
+              subtitle: Text(
+                tr(
+                  'Скрыть строку состояния и системные кнопки',
+                  'Hide the status bar and system buttons',
+                ),
               ),
               value: on,
               onChanged: setFullscreen,
@@ -283,8 +318,11 @@ class FileBrowserState extends State<FileBrowser> {
       return Center(
         child: Text(
           widget.onFile == null
-              ? 'Здесь нет папок'
-              : 'Здесь нет папок и записей',
+              ? tr('Здесь нет папок', 'No folders here')
+              : tr(
+                  'Здесь нет папок и записей',
+                  'No folders or recordings here',
+                ),
         ),
       );
     }
@@ -303,8 +341,8 @@ class FileBrowserState extends State<FileBrowser> {
           );
         }
         final badges = [
-          if (e.regions > 0) '${e.regions} рег.',
-          if (e.markers > 0) '${e.markers} марк.',
+          if (e.regions > 0) tr('${e.regions} рег.', '${e.regions} reg.'),
+          if (e.markers > 0) tr('${e.markers} марк.', '${e.markers} mark.'),
         ].join(' · ');
         return ListTile(
           selected: e.path == widget.current,
@@ -359,7 +397,7 @@ class _FolderPickerState extends State<_FolderPicker> {
     final name = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Новая папка'),
+        title: Text(tr('Новая папка', 'New folder')),
         content: TextField(
           controller: controller,
           autofocus: true,
@@ -368,11 +406,11 @@ class _FolderPickerState extends State<_FolderPicker> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена'),
+            child: Text(tr('Отмена', 'Cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, controller.text),
-            child: const Text('Создать'),
+            child: Text(tr('Создать', 'Create')),
           ),
         ],
       ),
@@ -385,7 +423,14 @@ class _FolderPickerState extends State<_FolderPicker> {
     } on FileSystemException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Не создать папку: ${e.message}')),
+          SnackBar(
+            content: Text(
+              tr(
+                'Не создать папку: ${e.message}',
+                'Cannot create the folder: ${e.message}',
+              ),
+            ),
+          ),
         );
       }
     }
@@ -399,7 +444,7 @@ class _FolderPickerState extends State<_FolderPicker> {
         actions: [
           if (_dir != null)
             IconButton(
-              tooltip: 'Новая папка',
+              tooltip: tr('Новая папка', 'New folder'),
               icon: const Icon(Icons.create_new_folder_outlined),
               onPressed: _newFolder,
             ),
@@ -415,7 +460,11 @@ class _FolderPickerState extends State<_FolderPicker> {
           padding: const EdgeInsets.all(12),
           child: FilledButton.icon(
             icon: const Icon(Icons.check),
-            label: Text(_dir == null ? 'Выберите папку' : 'Сохранить сюда'),
+            label: Text(
+              _dir == null
+                  ? tr('Выберите папку', 'Pick a folder')
+                  : tr('Сохранить сюда', 'Save here'),
+            ),
             onPressed: _dir == null ? null : () => Navigator.pop(context, _dir),
           ),
         ),

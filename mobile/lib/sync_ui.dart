@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'browser.dart';
+import 'l10n.dart';
 import 'src/rust/api/sync.dart' as sync;
 import 'waveform.dart' show friendlyError;
 
@@ -24,7 +25,7 @@ Future<void> syncAll([BuildContext? context]) async {
 }
 
 String _when(int? ms) {
-  if (ms == null) return 'ещё не было';
+  if (ms == null) return tr('ещё не было', 'not yet');
   final t = DateTime.fromMillisecondsSinceEpoch(ms);
   String two(int v) => v.toString().padLeft(2, '0');
   return '${two(t.day)}.${two(t.month)} ${two(t.hour)}:${two(t.minute)}';
@@ -64,7 +65,10 @@ class _VolumeSheetState extends State<_VolumeSheet> {
       if (r.imported > 0) markupChanged.value++;
       _message = r.errors.isNotEmpty
           ? r.errors.join('\n')
-          : 'Готово: с носителя записей — ${r.imported}, на носитель — ${r.exported}';
+          : tr(
+              'Готово: с носителя записей — ${r.imported}, на носитель — ${r.exported}',
+              'Done: recordings from the volume — ${r.imported}, to the volume — ${r.exported}',
+            );
     } catch (e) {
       _message = friendlyError(e);
     }
@@ -76,7 +80,7 @@ class _VolumeSheetState extends State<_VolumeSheet> {
     if (!here) {
       final picked = await pickFolder(
         context,
-        title: 'Где хранить файл разметки',
+        title: tr('Где хранить файл разметки', 'Where to keep the markup file'),
         settingsKey: 'mobile.sync_browser',
       );
       if (picked == null) return;
@@ -90,7 +94,10 @@ class _VolumeSheetState extends State<_VolumeSheet> {
   Future<void> _find() async {
     final picked = await pickFolder(
       context,
-      title: 'Папка с ${sync.stateFileName()}',
+      title: tr(
+        'Папка с ${sync.stateFileName()}',
+        'Folder with ${sync.stateFileName()}',
+      ),
       settingsKey: 'mobile.sync_browser',
     );
     if (picked == null) return;
@@ -113,58 +120,83 @@ class _VolumeSheetState extends State<_VolumeSheet> {
             Text(widget.volume.label, style: theme.textTheme.titleLarge),
             Text(_root, style: theme.textTheme.bodySmall),
             const SizedBox(height: 16),
-            Text('Файл разметки', style: theme.textTheme.titleMedium),
+            Text(
+              tr('Файл разметки', 'Markup file'),
+              style: theme.textTheme.titleMedium,
+            ),
             const SizedBox(height: 4),
             if (info == null) ...[
               Text(
-                'Разметка (регионы, маркеры, имена, нарезка) сейчас хранится '
-                'только в приложении. Можно держать её копию в файле '
-                '${sync.stateFileName()} на этом носителе — тогда она поедет '
-                'вместе с записями на другое устройство. Синхронизация сама '
-                'по себе: при подключении носителя, смене записи и выходе из '
-                'приложения. Побеждает более поздняя правка каждой записи.',
+                tr(
+                  'Разметка (регионы, маркеры, имена, нарезка) сейчас хранится '
+                      'только в приложении. Можно держать её копию в файле '
+                      '${sync.stateFileName()} на этом носителе — тогда она поедет '
+                      'вместе с записями на другое устройство. Синхронизация сама '
+                      'по себе: при подключении носителя, смене записи и выходе из '
+                      'приложения. Побеждает более поздняя правка каждой записи.',
+                  'The markup (regions, markers, names, cuts) lives only in the app now. A copy can be kept in ${sync.stateFileName()} on this volume, so it travels with the recordings to another device. It syncs by itself: when the volume is connected, when you switch recordings and when you leave the app. The later edit of each recording wins.',
+                ),
                 style: theme.textTheme.bodySmall,
               ),
               const SizedBox(height: 12),
               FilledButton.icon(
                 icon: const Icon(Icons.note_add_outlined),
-                label: const Text('Создать в корне носителя'),
+                label: Text(
+                  tr('Создать в корне носителя', 'Create in the volume root'),
+                ),
                 onPressed: _busy ? null : () => _create(here: true),
               ),
               OutlinedButton.icon(
                 icon: const Icon(Icons.create_new_folder_outlined),
-                label: const Text('Создать в папке…'),
+                label: Text(tr('Создать в папке…', 'Create in a folder…')),
                 onPressed: _busy ? null : () => _create(here: false),
               ),
               OutlinedButton.icon(
                 icon: const Icon(Icons.search),
-                label: const Text('Указать существующий…'),
+                label: Text(
+                  tr('Указать существующий…', 'Use an existing one…'),
+                ),
                 onPressed: _busy ? null : _find,
               ),
             ] else ...[
               Text(info.file, style: theme.textTheme.bodyMedium),
               Text(
                 info.available
-                    ? 'Последняя синхронизация: ${_when(info.lastSync)}'
-                    : 'Носитель не подключён — синхронизируется при подключении',
+                    ? tr(
+                        'Последняя синхронизация: ${_when(info.lastSync)}',
+                        'Last sync: ${_when(info.lastSync)}',
+                      )
+                    : tr(
+                        'Носитель не подключён — синхронизируется при подключении',
+                        'Volume not connected — it syncs when connected',
+                      ),
                 style: theme.textTheme.bodySmall,
               ),
               const SizedBox(height: 12),
               FilledButton.icon(
                 icon: const Icon(Icons.sync),
-                label: const Text('Синхронизировать сейчас'),
+                label: Text(tr('Синхронизировать сейчас', 'Sync now')),
                 onPressed: _busy || !info.available
                     ? null
                     : () => _run(() => sync.syncVolume(root: _root)),
               ),
               TextButton.icon(
                 icon: const Icon(Icons.sync_disabled),
-                label: const Text('Отключить (файл останется на носителе)'),
+                label: Text(
+                  tr(
+                    'Отключить (файл останется на носителе)',
+                    'Turn off (the file stays on the volume)',
+                  ),
+                ),
                 onPressed: _busy
                     ? null
                     : () async {
                         await sync.disableSync(root: _root);
-                        if (mounted) setState(() => _message = 'Отключено');
+                        if (mounted) {
+                          setState(
+                            () => _message = tr('Отключено', 'Turned off'),
+                          );
+                        }
                       },
               ),
             ],

@@ -15,6 +15,7 @@ use relm4::gtk::{self, cairo, gdk, glib, prelude::*};
 
 use crate::audio::peaks::{self as peaks_mod, Peaks, PeaksReader};
 use crate::core::{ColorIdx, Id, Item, Markup, PALETTE};
+use crate::lang::tr;
 
 const RULER_H: f64 = 20.0;
 const LABEL_H: f64 = 20.0;
@@ -850,7 +851,7 @@ fn draw_region_labels(cr: &cairo::Context, w: f64, s: &State) -> Result<(), cair
         set_color(cr, &text_on(&color), if r.export { 1.0 } else { 0.6 });
         let looping = if s.looping == Some(r.id) { "⟳ " } else { "" };
         let name = if r.name.is_empty() {
-            "без имени"
+            tr("без имени", "untitled")
         } else {
             &r.name
         };

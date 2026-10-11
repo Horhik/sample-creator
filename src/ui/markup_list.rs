@@ -8,6 +8,7 @@ use relm4::gtk::{self, gdk, glib, prelude::*};
 
 use super::waveform::{color_rgba, format_time};
 use crate::core::{ChannelMode, ColorIdx, Id, Item, Markup, PALETTE};
+use crate::lang::{sec, tr};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ListEvent {
@@ -21,12 +22,17 @@ pub enum ListEvent {
     Done,
 }
 
-const CHANNEL_MODES: [(ChannelMode, &str); 4] = [
-    (ChannelMode::AsSource, "как есть"),
-    (ChannelMode::Left, "только L"),
-    (ChannelMode::Right, "только R"),
-    (ChannelMode::SplitMono, "L и R отдельно"),
-];
+fn channel_modes() -> [(ChannelMode, &'static str); 4] {
+    [
+        (ChannelMode::AsSource, tr("как есть", "as is")),
+        (ChannelMode::Left, tr("только L", "L only")),
+        (ChannelMode::Right, tr("только R", "R only")),
+        (
+            ChannelMode::SplitMono,
+            tr("L и R отдельно", "L and R apart"),
+        ),
+    ]
+}
 
 type Handler = Rc<RefCell<Option<Rc<dyn Fn(ListEvent)>>>>;
 
@@ -54,7 +60,10 @@ impl MarkupList {
             .css_classes(["boxed-list-separate", "markup-list"])
             .build();
         let placeholder = gtk::Label::builder()
-            .label("Нет маркеров и регионов. M — маркер, выделите участок и нажмите R — регион.")
+            .label(tr(
+                "Нет маркеров и регионов. M — маркер, выделите участок и нажмите R — регион.",
+                "No markers or regions. M — marker; select a stretch and press R — region.",
+            ))
             .wrap(true)
             .css_classes(["dim-label"])
             .margin_top(18)
@@ -205,10 +214,11 @@ impl MarkupList {
             Item::Region(id) => {
                 let r = markup.region(id).expect("item comes from this markup");
                 let time = format!(
-                    "{} – {}  ({:.2} с)",
+                    "{} – {}  ({:.2} {})",
                     format_time(secs(r.start), true),
                     format_time(secs(r.end), true),
-                    secs(r.len())
+                    secs(r.len()),
+                    sec()
                 );
                 (r.name.clone(), r.color, time, Some(r))
             }
@@ -229,15 +239,15 @@ impl MarkupList {
             Item::Region(_) => "object-select-symbolic",
         });
         kind.set_tooltip_text(Some(match item {
-            Item::Marker(_) => "маркер",
-            Item::Region(_) => "регион",
+            Item::Marker(_) => tr("маркер", "marker"),
+            Item::Region(_) => tr("регион", "region"),
         }));
         kind.add_css_class("dim-label");
         row_box.append(&kind);
 
         let entry = gtk::Entry::builder()
             .text(&name)
-            .placeholder_text("без имени")
+            .placeholder_text(tr("без имени", "untitled"))
             .hexpand(true)
             .has_frame(false)
             .build();
@@ -252,18 +262,18 @@ impl MarkupList {
 
         if let Some(r) = region {
             if channels == 2 {
-                let names: Vec<&str> = CHANNEL_MODES.iter().map(|(_, n)| *n).collect();
+                let names: Vec<&str> = channel_modes().iter().map(|(_, n)| *n).collect();
                 let dropdown = gtk::DropDown::from_strings(&names);
-                dropdown.set_tooltip_text(Some("Каналы при экспорте"));
+                dropdown.set_tooltip_text(Some(tr("Каналы при экспорте", "Channels on export")));
                 dropdown.add_css_class("flat");
-                let pos = CHANNEL_MODES
+                let pos = channel_modes()
                     .iter()
                     .position(|(m, _)| *m == r.channels)
                     .unwrap_or(0);
                 dropdown.set_selected(pos as u32);
                 let (this, id) = (self.clone(), r.id);
                 dropdown.connect_selected_notify(move |d| {
-                    if let Some((mode, _)) = CHANNEL_MODES.get(d.selected() as usize) {
+                    if let Some((mode, _)) = channel_modes().get(d.selected() as usize) {
                         this.emit(ListEvent::Channels(id, *mode));
                     }
                 });
@@ -272,7 +282,7 @@ impl MarkupList {
 
             let export = gtk::CheckButton::builder()
                 .active(r.export)
-                .tooltip_text("В экспорт (E)")
+                .tooltip_text(tr("В экспорт (E)", "Export (E)"))
                 .build();
             let (this, id) = (self.clone(), r.id);
             export.connect_toggled(move |b| this.emit(ListEvent::Export(id, b.is_active())));
@@ -281,7 +291,7 @@ impl MarkupList {
 
         let delete = gtk::Button::builder()
             .icon_name("user-trash-symbolic")
-            .tooltip_text("Удалить (Del)")
+            .tooltip_text(tr("Удалить (Del)", "Delete (Del)"))
             .css_classes(["flat", "circular"])
             .build();
         let this = self.clone();
@@ -337,7 +347,7 @@ impl MarkupList {
         let swatch = color_swatch(color, 14);
         let button = gtk::MenuButton::builder()
             .child(&swatch)
-            .tooltip_text("Цвет (1–8)")
+            .tooltip_text(tr("Цвет (1–8)", "Colour (1–8)"))
             .css_classes(["flat", "circular"])
             .build();
 
