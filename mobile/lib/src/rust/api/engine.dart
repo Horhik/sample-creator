@@ -144,6 +144,11 @@ void setRange({
 );
 
 /// Volume of what plays, as a factor: a louder region is heard louder.
+/// Listening volume in dB (−24…+24) for everything played; export is
+/// not affected. Above 0 loud parts clip.
+void setListeningDb({required double db}) =>
+    RustLib.instance.api.crateApiEngineSetListeningDb(db: db);
+
 void setGain({required double gain}) =>
     RustLib.instance.api.crateApiEngineSetGain(gain: gain);
 

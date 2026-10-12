@@ -464,6 +464,15 @@ pub fn set_range(start: i64, end: Option<i64>, looping: bool) {
 }
 
 /// Volume of what plays, as a factor: a louder region is heard louder.
+/// Listening volume in dB (−24…+24) for everything played; export is
+/// not affected. Above 0 loud parts clip.
+#[frb(sync)]
+pub fn set_listening_db(db: f64) {
+    if let Some(p) = crate::state::player() {
+        p.set_monitor_db(db as f32);
+    }
+}
+
 #[frb(sync)]
 pub fn set_gain(gain: f32) {
     if let Some(p) = player() {

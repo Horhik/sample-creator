@@ -41,6 +41,8 @@ struct Shared {
     position: AtomicU64,
     /// Output gain as f32 bits: a region made louder is heard louder in markup.
     gain: std::sync::atomic::AtomicU32,
+    /// Listening volume as f32 bits, on top of `gain`; kept across loads.
+    monitor: std::sync::atomic::AtomicU32,
 }
 
 impl Shared {
@@ -67,10 +69,16 @@ enum Cmd {
     },
 }
 
+/// Range of the listening volume ([`Player::set_monitor_db`]).
+pub const MONITOR_MIN_DB: f32 = -24.0;
+pub const MONITOR_MAX_DB: f32 = 24.0;
+
 pub struct Player {
     _stream: cpal::Stream,
     shared: Arc<Shared>,
     cmd: Sender<Cmd>,
+    /// The file being played, if any.
+    current: Mutex<Option<PathBuf>>,
 }
 
 impl Player {
@@ -91,6 +99,7 @@ impl Player {
             exhausted: AtomicBool::new(true),
             position: AtomicU64::new(0f64.to_bits()),
             gain: std::sync::atomic::AtomicU32::new(1f32.to_bits()),
+            monitor: std::sync::atomic::AtomicU32::new(1f32.to_bits()),
         });
 
         let stream = match format {
@@ -112,12 +121,26 @@ impl Player {
             _stream: stream,
             shared,
             cmd,
+            current: Mutex::new(None),
         })
+    }
+
+    /// A new source replaces the current one. A file on another computer may
+    /// be waiting on the network: its reads give up, so the decoder gets to
+    /// the next command at once.
+    fn replace_source(&self, next: Option<PathBuf>) {
+        let old = std::mem::replace(&mut *self.current.lock().unwrap(), next);
+        if let Some(old) = old
+            && crate::vfs::is_remote(&old)
+        {
+            crate::remote::interrupt_reads(&old);
+        }
     }
 
     /// Also resets the gain: whoever loads decides how loud it plays.
     pub fn load(&self, path: PathBuf) {
         self.pause();
+        self.replace_source(Some(path.clone()));
         self.set_gain(1.0);
         self.shared.set_position(0.0);
         self.send(Cmd::Load(path));
@@ -127,6 +150,7 @@ impl Player {
     /// Also resets the gain (rendered audio already has its own).
     pub fn load_memory(&self, samples: Arc<Vec<f32>>, channels: u16, sample_rate: u32) {
         self.pause();
+        self.replace_source(None);
         self.set_gain(1.0);
         self.shared.set_position(0.0);
         self.send(Cmd::LoadMemory {
@@ -138,6 +162,7 @@ impl Player {
 
     pub fn unload(&self) {
         self.pause();
+        self.replace_source(None);
         self.send(Cmd::Unload);
     }
 
@@ -186,7 +211,6 @@ impl Player {
         });
     }
 
-    /// Playhead in source frames.
     /// Volume of what plays from now on, as a factor (1.0 = as recorded).
     pub fn set_gain(&self, gain: f32) {
         self.shared
@@ -194,6 +218,14 @@ impl Player {
             .store(gain.max(0.0).to_bits(), Ordering::Relaxed);
     }
 
+    /// Listening volume in dB, on top of everything else and kept across
+    /// loads. Loud enough clips, which is the point when a take is quiet.
+    pub fn set_monitor_db(&self, db: f32) {
+        let factor = 10f32.powf(db.clamp(MONITOR_MIN_DB, MONITOR_MAX_DB) / 20.0);
+        self.shared.monitor.store(factor.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Playhead in source frames.
     pub fn position(&self) -> u64 {
         f64::from_bits(self.shared.position.load(Ordering::Relaxed)) as u64
     }
@@ -229,7 +261,8 @@ fn fill<T: SizedSample + FromSample<f32>>(out: &mut [T], channels: usize, shared
         return;
     }
 
-    let gain = f32::from_bits(shared.gain.load(Ordering::Relaxed));
+    let gain = f32::from_bits(shared.gain.load(Ordering::Relaxed))
+        * f32::from_bits(shared.monitor.load(Ordering::Relaxed));
     let mut queue = shared.queue.lock().unwrap();
     let mut written = 0;
     while written < out.len() {

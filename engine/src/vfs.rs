@@ -41,6 +41,7 @@ pub fn open(path: &Path) -> io::Result<VFile> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct Meta {
     pub len: u64,
     pub modified: Option<SystemTime>,
@@ -58,6 +59,15 @@ pub fn metadata(path: &Path) -> io::Result<Meta> {
                 is_dir: m.is_dir(),
             })
         }
+    }
+}
+
+/// Like [`metadata`], but never waits on the network: a remote file gives
+/// what was last seen of it. For calls made while drawing.
+pub fn metadata_now(path: &Path) -> Option<Meta> {
+    match split_remote(path) {
+        Some((id, inner)) => remote::known_metadata(id, &inner),
+        None => metadata(path).ok(),
     }
 }
 

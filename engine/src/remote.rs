@@ -330,7 +330,17 @@ struct Client {
     conn: Mutex<Option<Connection>>,
     /// The shared folder's own name, for showing.
     name: String,
+    /// After a failed connection: until then requests fail at once instead
+    /// of each waiting for the computer again.
+    down_until: Mutex<Option<std::time::Instant>>,
 }
+
+/// How long connecting may take, and how long to give up on the computer
+/// after it did not answer.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const DOWN_FOR: Duration = Duration::from_secs(10);
+/// One request (up to [`MAX_READ`] bytes) over a slow link.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 static CLIENTS: Mutex<Option<HashMap<String, Arc<Client>>>> = Mutex::new(None);
 
@@ -377,8 +387,16 @@ pub fn connect(ticket: &str) -> Result<Mounted> {
         endpoint,
         conn: Mutex::new(None),
         name: String::new(),
+        down_until: Mutex::new(None),
     };
-    let top = c.request(&Op::Stat { path: String::new() }).map(|(r, _)| r)?;
+    let top = match c.request(&Op::Stat { path: String::new() }) {
+        Ok((r, _)) => r,
+        Err(e) => {
+            let endpoint = c.endpoint.clone();
+            runtime().spawn(async move { endpoint.close().await });
+            return Err(e);
+        }
+    };
     c.name = top.name;
     let name = c.name.clone();
     CLIENTS
@@ -406,14 +424,31 @@ impl Client {
         {
             return Ok(c);
         }
-        let c = tokio::time::timeout(
-            Duration::from_secs(20),
+        let not_answering = || anyhow!(tr("компьютер не отвечает", "the computer does not answer"));
+        if self
+            .down_until
+            .lock()
+            .unwrap()
+            .is_some_and(|t| std::time::Instant::now() < t)
+        {
+            return Err(not_answering());
+        }
+        let connected = tokio::time::timeout(
+            CONNECT_TIMEOUT,
             self.endpoint
                 .connect(self.ticket.endpoint_addr().clone(), ALPN),
         )
         .await
-        .map_err(|_| anyhow!(tr("компьютер не отвечает", "the computer does not answer")))?
-        .map_err(|e| anyhow!("{e}"))?;
+        .map_err(|_| not_answering())
+        .and_then(|r| r.map_err(|e| anyhow!("{e}")));
+        let c = match connected {
+            Ok(c) => c,
+            Err(e) => {
+                *self.down_until.lock().unwrap() = Some(std::time::Instant::now() + DOWN_FOR);
+                return Err(e);
+            }
+        };
+        *self.down_until.lock().unwrap() = None;
         *self.conn.lock().unwrap() = Some(c.clone());
         Ok(c)
     }
@@ -434,27 +469,32 @@ impl Client {
         runtime().block_on(self.send(&req))
     }
 
-    /// Sends a serialised request; reconnects once if the connection dropped.
+    /// Sends a serialised request. If an open connection turned out dead,
+    /// connects again once; a computer that does not answer is not retried.
     async fn send(&self, req: &[u8]) -> Result<(Reply, Vec<u8>)> {
-        let mut last = None;
-        for _ in 0..2 {
-            match self.round_trip(req).await {
-                Ok(r) => return Ok(r),
-                Err(e) => {
-                    *self.conn.lock().unwrap() = None;
-                    last = Some(e);
-                }
-            }
+        let had_connection = self.conn.lock().unwrap().is_some();
+        let first = self.round_trip(req).await;
+        if first.is_ok() || !had_connection {
+            return first;
         }
-        Err(last.unwrap_or_else(|| anyhow!("request failed")))
+        *self.conn.lock().unwrap() = None;
+        self.round_trip(req).await
     }
 
     async fn round_trip(&self, req: &[u8]) -> Result<(Reply, Vec<u8>)> {
         let conn = self.connection().await?;
-        let (mut send, mut recv) = conn.open_bi().await?;
-        send.write_all(req).await?;
-        send.finish()?;
-        let raw = recv.read_to_end(MAX_READ as usize + 64 * 1024).await?;
+        let raw = tokio::time::timeout(REQUEST_TIMEOUT, async {
+            let (mut send, mut recv) = conn.open_bi().await?;
+            send.write_all(req).await?;
+            send.finish()?;
+            Ok::<_, anyhow::Error>(recv.read_to_end(MAX_READ as usize + 64 * 1024).await?)
+        })
+        .await
+        .map_err(|_| {
+            // Probably a dead link: the next request connects again.
+            *self.conn.lock().unwrap() = None;
+            anyhow!(tr("компьютер не отвечает", "the computer does not answer"))
+        })??;
         let nl = raw
             .iter()
             .position(|&b| b == b'\n')
@@ -488,13 +528,54 @@ pub fn stat(id: &str, inner: &str) -> io::Result<Meta> {
             path: inner.to_owned(),
         })
         .map_err(io_err)?;
-    Ok(Meta {
+    let meta = Meta {
         len: r.len,
         modified: r
             .mtime
             .map(|s| SystemTime::UNIX_EPOCH + Duration::from_secs(s)),
         is_dir: r.dir,
-    })
+    };
+    STATS
+        .lock()
+        .unwrap()
+        .get_or_insert_with(HashMap::new)
+        .insert(format!("{id}/{inner}"), meta);
+    Ok(meta)
+}
+
+/// The last size and time seen of each remote file: "id/inner" → meta.
+static STATS: Mutex<Option<HashMap<String, Meta>>> = Mutex::new(None);
+
+/// Size and time of a remote file without asking the computer: as last seen,
+/// or as its copy says. For callers that must not wait on the network.
+pub fn known_metadata(id: &str, inner: &str) -> Option<Meta> {
+    let seen = STATS
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|m| m.get(&format!("{id}/{inner}")).copied());
+    seen.or_else(|| offline_copy(id, inner).map(|(_, meta)| meta))
+}
+
+// ---- Interrupting reads ----
+
+/// Bumped by every interruption; a file opened before one of its own path's
+/// interruptions gives up reading.
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// "id/inner" → the generation it was interrupted at.
+static INTERRUPTED: Mutex<Option<HashMap<String, u64>>> = Mutex::new(None);
+
+/// Makes reads of a remote file that are waiting on the network give up,
+/// e.g. when the player moves on to another file.
+pub fn interrupt_reads(path: &Path) {
+    if let Some((id, inner)) = crate::vfs::split_remote(path) {
+        let at = GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        INTERRUPTED
+            .lock()
+            .unwrap()
+            .get_or_insert_with(HashMap::new)
+            .insert(format!("{id}/{inner}"), at);
+    }
 }
 
 /// Opens a remote file: its downloaded copy if there is one for this version
@@ -519,6 +600,8 @@ pub fn open(id: &str, inner: &str) -> io::Result<VFile> {
         return Ok(VFile::Local(std::fs::File::open(copy)?));
     }
     Ok(VFile::Remote(RemoteFile {
+        key: format!("{id}/{inner}"),
+        generation: GENERATION.load(std::sync::atomic::Ordering::SeqCst),
         client: client(id)?,
         path: inner.to_owned(),
         len: meta.len,
@@ -802,6 +885,9 @@ pub struct RemoteFile {
     /// The partial copy: blocks it has are read from it, and blocks read in
     /// order from its end extend it.
     part: Option<PathBuf>,
+    /// "id/inner" and the generation it was opened in (see [`interrupt_reads`]).
+    key: String,
+    generation: u64,
 }
 
 impl RemoteFile {
@@ -811,6 +897,15 @@ impl RemoteFile {
 
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    fn interrupted(&self) -> bool {
+        INTERRUPTED
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|m| m.get(&self.key))
+            .is_some_and(|&at| at >= self.generation)
     }
 
     fn cached(&self, index: u64) -> Option<Arc<Vec<u8>>> {
@@ -844,6 +939,9 @@ impl RemoteFile {
     }
 
     fn block(&self, index: u64) -> io::Result<Arc<Vec<u8>>> {
+        if self.interrupted() {
+            return Err(io::Error::other("read interrupted"));
+        }
         if let Some(data) = self.cached(index) {
             return Ok(data);
         }
@@ -872,6 +970,14 @@ impl RemoteFile {
                         tokio::spawn(async move { c.send(&req?).await.map(|(_, b)| (i, b)) })
                     })
                     .collect();
+                // Waits for all of them, unless the reader moved on.
+                while !tasks.iter().all(|t| t.is_finished()) {
+                    if self.interrupted() {
+                        tasks.iter().for_each(|t| t.abort());
+                        bail!("read interrupted");
+                    }
+                    tokio::time::sleep(Duration::from_millis(15)).await;
+                }
                 let mut out = Vec::new();
                 for t in tasks {
                     out.push(t.await??);
@@ -984,6 +1090,14 @@ mod loopback {
         let mut out = Vec::new();
         src.read(&mut out, 10).unwrap();
         assert!((out[0] - 40_000.0 / 65_536.0).abs() < 1e-6);
+
+        // The player moving on makes waiting reads give up; a new open reads.
+        let VFile::Remote(mut old) = crate::vfs::open(&path).unwrap() else {
+            panic!("not downloaded yet, so it streams");
+        };
+        interrupt_reads(&path);
+        assert!(old.read(&mut [0u8; 16]).is_err());
+        assert!(decode::open(&path).is_ok());
 
         // Streaming from the start began the partial copy.
         assert!(!has_copy(&path));

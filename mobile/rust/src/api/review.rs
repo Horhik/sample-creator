@@ -147,6 +147,13 @@ pub struct PartView {
 /// Every region in the library, grouped by recording and sorted by start.
 pub fn all_regions() -> Result<Vec<ReviewRegion>> {
     let rows = library()?.all_regions()?;
+    // Once per recording: a file on a computer is asked over the network.
+    let mut available = std::collections::HashMap::new();
+    for (f, _) in &rows {
+        available
+            .entry(f.path.clone())
+            .or_insert_with(|| sample_creator_engine::vfs::exists(&f.path));
+    }
     Ok(rows
         .into_iter()
         .map(|(f, r)| ReviewRegion {
@@ -178,7 +185,7 @@ pub fn all_regions() -> Result<Vec<ReviewRegion>> {
             sample_rate: f.sample_rate,
             file_channels: f.channels,
             total_frames: f.total_frames as i64,
-            available: sample_creator_engine::vfs::exists(&f.path),
+            available: available.get(&f.path).copied().unwrap_or(false),
             start: r.start as i64,
             end: r.end as i64,
             name: r.name,

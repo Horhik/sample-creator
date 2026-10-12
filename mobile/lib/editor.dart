@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import 'item_sheet.dart';
 import 'browser.dart';
+import 'listening.dart';
 import 'remote_ui.dart';
 import 'src/rust/api/remote.dart' as remote_api;
 import 'src/rust/api/engine.dart' as engine;
@@ -985,6 +986,7 @@ class _EditorPageState extends State<EditorPage>
               icon: const Icon(Icons.crop_free),
               onPressed: _makeRegion,
             ),
+            const ListeningButton(),
             _zoomSlider(width: 140),
             IconButton(
               tooltip: tr('Спрятать управление', 'Hide controls'),
@@ -1182,7 +1184,9 @@ class _EditorPageState extends State<EditorPage>
                 Tooltip(
                   message: tr('Нет вывода звука', 'No audio output'),
                   child: Icon(Icons.volume_off),
-                ),
+                )
+              else
+                const ListeningButton(),
             ],
           ),
           Row(

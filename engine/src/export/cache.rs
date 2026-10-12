@@ -41,7 +41,7 @@ fn key(path: &Path, r: &Region) -> u64 {
     let mut h = xxhash_rust::xxh3::Xxh3::new();
     h.write_u32(VERSION);
     h.write(path.to_string_lossy().as_bytes());
-    if let Ok(meta) = crate::vfs::metadata(path) {
+    if let Some(meta) = crate::vfs::metadata_now(path) {
         h.write_u64(meta.len);
         if let Some(t) = meta.modified
             && let Ok(d) = t.duration_since(std::time::UNIX_EPOCH)
@@ -69,6 +69,11 @@ fn dir() -> Option<PathBuf> {
 
 /// The region rendered, from the cache when possible.
 pub fn rendered(path: &Path, region: &Region) -> Result<Arc<Rendered>> {
+    // A file on a computer: look at it now, so the key notices a change
+    // (`cached`, called while drawing, only uses what was seen last).
+    if crate::vfs::is_remote(path) {
+        let _ = crate::vfs::metadata(path);
+    }
     let k = key(path, region);
     if let Some(r) = from_memory(k) {
         return Ok(r);

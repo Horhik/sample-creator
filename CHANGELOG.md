@@ -8,6 +8,15 @@
   start while it streams; let go to stop. What was heard is kept, and opening
   the recording then downloads only the rest.
 - A cancelled or broken download goes on later from where it stopped.
+- Listening volume next to the transport (phone and desktop): −24…+24 dB for
+  everything that plays, loud enough to clip a quiet take; export is not
+  affected.
+- Stability: local files play again at once after a shared one (the player
+  no longer waits on the network); a computer that does not answer is given
+  up on in 10 seconds instead of hanging every request; the region review no
+  longer asks the network while drawing and checks each recording once; its
+  mini waveforms no longer download whole shared recordings in the
+  background.
 
 ## 0.3.0
 

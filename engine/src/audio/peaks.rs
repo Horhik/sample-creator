@@ -163,6 +163,11 @@ fn run(path: &Path, cache: Option<PathBuf>, peaks: &Peaks, cancel: &AtomicBool) 
     {
         return Ok(());
     }
+    // A file on a computer that is not downloaded: its waveform waits until
+    // it is (reading it all over the network just for this is too much).
+    if crate::vfs::is_remote(path) && !crate::remote::has_copy(path) {
+        anyhow::bail!("not downloaded yet");
+    }
 
     let (_, mut source) = decode::open(path)?;
     let channels = peaks.channels;

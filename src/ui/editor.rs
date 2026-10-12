@@ -15,7 +15,7 @@ use super::markup_list::{ListEvent, MarkupList};
 use super::waveform::{WaveEvent, Waveform, format_time};
 use crate::audio::decode::AudioInfo;
 use crate::audio::peaks::{self, PeakJob};
-use crate::audio::player::Player;
+use crate::audio::player::{MONITOR_MAX_DB, MONITOR_MIN_DB, Player};
 use crate::core::history::{Change, History};
 use crate::core::{ChannelMode, ColorIdx, Id, Item, Marker, Markup, PALETTE, Region};
 use crate::lang::{sec, tr};
@@ -32,6 +32,8 @@ struct Loaded {
 
 pub struct Editor {
     player: Option<Rc<Player>>,
+    /// Listening volume in dB (see [`Player::set_monitor_db`]).
+    listening_db: f64,
     library: Rc<Library>,
     file: Option<Loaded>,
     error: Option<String>,
@@ -69,6 +71,8 @@ pub enum EditorMsg {
     ToStart,
     /// Relative seek in seconds.
     Nudge(f64),
+    /// Listening volume in dB, for everything played (not exported).
+    ListeningDb(f64),
     ZoomIn,
     ZoomOut,
     ZoomFit,
@@ -215,6 +219,66 @@ impl SimpleComponent for Editor {
                                 #[watch]
                                 set_label: &model.selection_label(),
                             },
+                            gtk::MenuButton {
+                                add_css_class: "flat",
+                                set_tooltip_text: Some(tr("Громкость прослушивания", "Listening volume")),
+                                #[wrap(Some)]
+                                set_child = &gtk::Box {
+                                    set_spacing: 4,
+                                    gtk::Image {
+                                        #[watch]
+                                        set_icon_name: Some(if model.listening_db < 0.0 {
+                                            "audio-volume-low-symbolic"
+                                        } else {
+                                            "audio-volume-high-symbolic"
+                                        }),
+                                    },
+                                    gtk::Label {
+                                        add_css_class: "numeric",
+                                        #[watch]
+                                        set_visible: model.listening_db != 0.0,
+                                        #[watch]
+                                        set_label: &listening_label(model.listening_db),
+                                    },
+                                },
+                                #[wrap(Some)]
+                                set_popover = &gtk::Popover {
+                                    gtk::Box {
+                                        set_orientation: gtk::Orientation::Vertical,
+                                        set_spacing: 6,
+                                        set_margin_all: 6,
+                                        gtk::Label {
+                                            set_label: tr("Громкость прослушивания", "Listening volume"),
+                                            add_css_class: "heading",
+                                            set_xalign: 0.0,
+                                        },
+                                        gtk::Scale::with_range(
+                                            gtk::Orientation::Horizontal,
+                                            f64::from(MONITOR_MIN_DB),
+                                            f64::from(MONITOR_MAX_DB),
+                                            1.0,
+                                        ) {
+                                            set_width_request: 260,
+                                            set_draw_value: true,
+                                            set_digits: 0,
+                                            set_value: model.listening_db,
+                                            add_mark: (0.0, gtk::PositionType::Bottom, Some("0")),
+                                            connect_value_changed[sender] => move |scale| {
+                                                sender.input(EditorMsg::ListeningDb(scale.value().round()));
+                                            },
+                                        },
+                                        gtk::Label {
+                                            set_label: tr(
+                                                "Для всего, что играет; в экспорт не попадает.\nВыше 0 дБ громкие места перегружаются.",
+                                                "For everything that plays; export is not affected.\nAbove 0 dB loud parts clip.",
+                                            ),
+                                            add_css_class: "dim-label",
+                                            add_css_class: "caption",
+                                            set_xalign: 0.0,
+                                        },
+                                    },
+                                },
+                            },
                             gtk::Button {
                                 set_icon_name: "zoom-out-symbolic",
                                 set_tooltip_text: Some(tr("Отдалить (−)", "Zoom out (−)")),
@@ -290,8 +354,17 @@ impl SimpleComponent for Editor {
         list.connect_event(move |e| s.emit(EditorMsg::List(e)));
         list.widget().set_hexpand(true);
 
+        let listening_db = library
+            .setting("listening_db")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0)
+            .clamp(f64::from(MONITOR_MIN_DB), f64::from(MONITOR_MAX_DB));
+        if let Some(p) = &player {
+            p.set_monitor_db(listening_db as f32);
+        }
         let model = Editor {
             player,
+            listening_db,
             library,
             file: None,
             error: None,
@@ -359,6 +432,16 @@ impl SimpleComponent for Editor {
             }
             EditorMsg::ZoomOut => {
                 self.waveform.zoom(2.0);
+                false
+            }
+            EditorMsg::ListeningDb(db) => {
+                if db != self.listening_db {
+                    self.listening_db = db;
+                    if let Some(p) = self.player() {
+                        p.set_monitor_db(db as f32);
+                    }
+                    self.library.set_setting("listening_db", &db.to_string()).ok();
+                }
                 false
             }
             EditorMsg::ZoomFit => {
@@ -1390,4 +1473,8 @@ fn help_button() -> gtk::MenuButton {
         .css_classes(["flat", "circular"])
         .popover(&popover)
         .build()
+}
+
+fn listening_label(db: f64) -> String {
+    format!("{}{db:.0} {}", if db > 0.0 { "+" } else { "" }, tr("дБ", "dB"))
 }
