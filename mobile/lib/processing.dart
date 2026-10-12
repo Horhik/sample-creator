@@ -225,11 +225,22 @@ class _ProcessingPageState extends State<ProcessingPage> {
     await _refresh();
   }
 
+  Widget _hint() => Text(
+    tr(
+      'Выберите регион: скорость, нарезка и склейка.',
+      'Pick a region: speed, cutting and splicing.',
+    ),
+    style: Theme.of(context).textTheme.bodySmall,
+  );
+
   @override
   Widget build(BuildContext context) {
     final r = _region;
+    final landscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
     return Scaffold(
       appBar: AppBar(
+        toolbarHeight: landscape ? 48 : null,
         title: Text(tr('Обработка', 'Processing')),
         actions: [
           IconButton(
@@ -257,6 +268,22 @@ class _ProcessingPageState extends State<ProcessingPage> {
                 ),
               ),
             )
+          : landscape
+          ? Row(
+              children: [
+                // The list as a narrow side panel, the work on the rest.
+                SizedBox(
+                  width: math.min(300, MediaQuery.sizeOf(context).width * 0.3),
+                  child: ListView(children: _list()),
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(
+                  child: r == null
+                      ? Center(child: _hint())
+                      : ListView(children: [_settings(r), _parts(r)]),
+                ),
+              ],
+            )
           : ListView(
               children: [
                 if (r != null) ...[
@@ -266,13 +293,7 @@ class _ProcessingPageState extends State<ProcessingPage> {
                 ] else
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                    child: Text(
-                      tr(
-                        'Выберите регион: скорость, нарезка и склейка.',
-                        'Pick a region: speed, cutting and splicing.',
-                      ),
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+                    child: _hint(),
                   ),
                 ..._list(),
               ],

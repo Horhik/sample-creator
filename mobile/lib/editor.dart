@@ -501,7 +501,8 @@ class _EditorPageState extends State<EditorPage>
   }
 
   void _onLongPressStart(LongPressStartDetails d) {
-    HapticFeedback.selectionClick();
+    // A new selection begins: a clear buzz under the finger.
+    HapticFeedback.mediumImpact();
     final f = _view.frameAt(d.localPosition.dx).round().clamp(0, _total);
     _dragFrame = f;
     setState(() {
@@ -551,6 +552,18 @@ class _EditorPageState extends State<EditorPage>
     } else if (mk != null && near(mk.pos)) {
       _drag = _Drag.marker;
       _dragFrame = mk.pos;
+    }
+    // The marker or an edge is caught and now follows the finger.
+    switch (_drag) {
+      case _Drag.marker:
+        HapticFeedback.mediumImpact();
+      case _Drag.selStart ||
+          _Drag.selEnd ||
+          _Drag.regionStart ||
+          _Drag.regionEnd:
+        HapticFeedback.selectionClick();
+      default:
+        break;
     }
   }
 
@@ -604,6 +617,7 @@ class _EditorPageState extends State<EditorPage>
     _drag = _Drag.none;
     final r = _selectedRegion;
     final mk = _selectedMarker;
+    if (drag == _Drag.marker) HapticFeedback.lightImpact();
     switch (drag) {
       case _Drag.regionStart || _Drag.regionEnd:
         final range = _dragRange!;

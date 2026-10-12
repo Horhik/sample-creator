@@ -29,11 +29,9 @@ class _ReviewPageState extends State<ReviewPage> {
       .palette()
       .map((c) => Color(0xff000000 | c.rgb))
       .toList();
-  late final List<String> _colorNames = engine
-      .palette()
-      .map((c) => c.name)
-      .toList();
-  final _formats = api.outputFormats();
+  // Getters: names follow the interface language.
+  List<String> get _colorNames => engine.palette().map((c) => c.name).toList();
+  List<api.FormatOption> get _formats => api.outputFormats();
 
   List<api.ReviewRegion> _rows = [];
   bool _loaded = false;
