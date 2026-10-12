@@ -46,8 +46,8 @@ SQLite собирается вместе с приложением, отдель
 ```sh
 nix develop .#android
 cd mobile
-flutter build apk --release --target-platform android-arm64
-# build/app/outputs/flutter-apk/app-release.apk
+flutter build apk --release --split-per-abi --target-platform android-arm64
+# build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
 ```
 
 Rust-часть Gradle собирает сам (`cargo ndk`). Для эмулятора добавьте
@@ -65,7 +65,7 @@ Rust-часть Gradle собирает сам (`cargo ndk`). Для эмуля�
 rustup target add aarch64-linux-android
 cargo install cargo-ndk
 cd mobile
-flutter build apk --release --target-platform android-arm64
+flutter build apk --release --split-per-abi --target-platform android-arm64
 ```
 
 ### После изменений в API моста

@@ -47,8 +47,8 @@ A shell with Flutter, the Android SDK/NDK and Rust for Android:
 ```sh
 nix develop .#android
 cd mobile
-flutter build apk --release --target-platform android-arm64
-# build/app/outputs/flutter-apk/app-release.apk
+flutter build apk --release --split-per-abi --target-platform android-arm64
+# build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
 ```
 
 Gradle builds the Rust part itself (`cargo ndk`). For the emulator add
@@ -66,7 +66,7 @@ Gradle builds the Rust part itself (`cargo ndk`). For the emulator add
 rustup target add aarch64-linux-android
 cargo install cargo-ndk
 cd mobile
-flutter build apk --release --target-platform android-arm64
+flutter build apk --release --split-per-abi --target-platform android-arm64
 ```
 
 ### After changing the bridge API

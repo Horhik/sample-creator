@@ -2,7 +2,7 @@
 
 <p><b>English</b> | <a href="CHANGELOG.ru.md">Русский</a></p>
 
-## Unreleased
+## 0.3.0
 
 - Folder sharing: right-click a folder in the desktop tree → Share folder…,
   scan the QR code on the phone, and its recordings open on the phone as if
@@ -11,6 +11,8 @@
   where possible, otherwise through public relays; encrypted end to end). The
   code is the password, and access is read-only. The phone remembers shared
   folders and reconnects when the computer shares the folder again.
+- The phone APK is smaller (20 MB instead of 29): native libraries are
+  compressed inside it.
 
 ## 0.2.0
 

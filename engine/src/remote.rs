@@ -23,6 +23,7 @@ use iroh_tickets::endpoint::EndpointTicket;
 use serde::{Deserialize, Serialize};
 
 use crate::lang::tr;
+use crate::store::Library;
 use crate::vfs::{Meta, REMOTE_ROOT};
 
 const ALPN: &[u8] = b"sample-creator/share/1";
@@ -107,6 +108,42 @@ pub fn random_token() -> String {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+/// This computer's iroh key (so the address stays the same) and the folder's
+/// access token, made once and kept: a QR code scanned before keeps working.
+pub fn share_keys(library: &Library, folder: &Path) -> ([u8; 32], String) {
+    let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    let secret = library
+        .setting("share.secret")
+        .and_then(|h| {
+            let bytes: Vec<u8> = (0..h.len())
+                .step_by(2)
+                .filter_map(|i| u8::from_str_radix(h.get(i..i + 2)?, 16).ok())
+                .collect();
+            bytes.try_into().ok()
+        })
+        .unwrap_or_else(|| {
+            let key = iroh_key();
+            library.set_setting("share.secret", &hex(&key)).ok();
+            key
+        });
+    let key = format!("share.token:{}", folder.display());
+    let token = library.setting(&key).unwrap_or_else(|| {
+        let t = random_token();
+        library.set_setting(&key, &t).ok();
+        t
+    });
+    (secret, token)
+}
+
+fn iroh_key() -> [u8; 32] {
+    let t = random_token() + &random_token();
+    let mut key = [0u8; 32];
+    for (i, b) in key.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&t[i * 2..i * 2 + 2], 16).unwrap_or(0);
+    }
+    key
 }
 
 // ---- Sharing side ----

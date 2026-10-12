@@ -138,7 +138,9 @@ cairo и общим состоянием в `Rc<RefCell<…>>` (`ui/waveform.rs`
 - Команды: `nix develop`, затем `cargo run [ПАПКА|ФАЙЛ]`; либо `nix run`.
 - Утилиты для отладки: `cargo run --example inspect -- FILE` (метаданные, метки,
   пики), `--example play -- FILE START SECS` (плеер без UI),
-  `--release --example peaks_bench -- FILE` (скорость расчёта волны).
+  `--release --example peaks_bench -- FILE` (скорость расчёта волны),
+  `--example share -- ПАПКА [QR.png]` (общий доступ к папке без интерфейса,
+  тот же код, что у десктопа).
 
 ## Android (ветка `android`)
 
@@ -150,7 +152,8 @@ cairo и общим состоянием в `Rc<RefCell<…>>` (`ui/waveform.rs`
   как `i64`, дешёвые вызовы `sync` опрашиваются каждый кадр).
 - Окружение: `nix develop .#android` (Flutter, SDK 35/36, NDK 28.2, CMake
   3.22.1, Rust с Android-таргетами из rust-overlay).
-- Сборка: `cd mobile && flutter build apk --release --target-platform android-arm64`.
+- Сборка: `cd mobile && flutter build apk --release --split-per-abi --target-platform android-arm64`
+  (→ `app-arm64-v8a-release.apk`; нативные библиотеки сжаты, `useLegacyPackaging`).
   Gradle сам собирает Rust через `cargo ndk` (задача `buildRust`, всегда release).
   После правок в `rust/src/api` — `flutter_rust_bridge_codegen generate`.
 - Проверка моста без телефона: `cargo run -p sample_creator_bridge --example smoke -- FILE`.
