@@ -29,6 +29,8 @@ pub struct App {
     processing: Controller<Processing>,
     root: PathBuf,
     view_stack: adw::ViewStack,
+    /// Window-wide notifications, e.g. "takes effect after a restart".
+    toasts: adw::ToastOverlay,
 }
 
 #[derive(Debug)]
@@ -70,7 +72,10 @@ impl SimpleComponent for App {
             set_icon_name: Some(crate::APP_ID),
             set_default_size: (1200, 760),
 
-            adw::ToolbarView {
+            #[name = "toasts"]
+            adw::ToastOverlay {
+            #[wrap(Some)]
+            set_child = &adw::ToolbarView {
                 add_top_bar = &adw::HeaderBar {
                     pack_start = &gtk::Button {
                         set_icon_name: "folder-open-symbolic",
@@ -220,6 +225,7 @@ impl SimpleComponent for App {
                     add_titled_with_icon[Some("processing"), tr("Обработка", "Processing"), "preferences-system-symbolic"] = model.processing.widget(),
                 },
             },
+            },
         }
     }
 
@@ -287,9 +293,11 @@ impl SimpleComponent for App {
             processing,
             root: root_dir,
             view_stack: adw::ViewStack::new(),
+            toasts: adw::ToastOverlay::new(),
         };
         let widgets = view_output!();
         model.view_stack = widgets.view_stack.clone();
+        model.toasts = widgets.toasts.clone();
 
         // The player is shared: whichever page becomes visible takes it over.
         let (editor_tx, review_tx, processing_tx) = (
@@ -414,7 +422,21 @@ impl SimpleComponent for App {
                 };
                 if let Err(err) = self.library.set_setting("language", value) {
                     eprintln!("language: {err:#}");
+                    return;
                 }
+                // Said in the chosen language: the labels only change on restart.
+                let russian = match value {
+                    "ru" => true,
+                    "en" => false,
+                    _ => lang::system_is_russian(),
+                };
+                let text = if russian {
+                    "Язык сменится после перезапуска"
+                } else {
+                    "Language changes after a restart"
+                };
+                self.toasts
+                    .add_toast(adw::Toast::builder().title(text).timeout(4).build());
             }
             AppMsg::DisableSync => {
                 if let Err(err) = sync::disable(&self.library, &self.root) {
