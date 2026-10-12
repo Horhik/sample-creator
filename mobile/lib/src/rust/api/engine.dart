@@ -94,6 +94,10 @@ Future<void> setRegionBounds({
   end: end,
 );
 
+/// Region volume in tenths of a dB (above zero: louder than the source).
+Future<void> setRegionGain({required PlatformInt64 id, required int gain}) =>
+    RustLib.instance.api.crateApiEngineSetRegionGain(id: id, gain: gain);
+
 Future<void> setRegionExport({
   required PlatformInt64 id,
   required bool export_,
@@ -138,6 +142,10 @@ void setRange({
   end: end,
   looping: looping,
 );
+
+/// Volume of what plays, as a factor: a louder region is heard louder.
+void setGain({required double gain}) =>
+    RustLib.instance.api.crateApiEngineSetGain(gain: gain);
 
 PlatformInt64 position() => RustLib.instance.api.crateApiEnginePosition();
 
@@ -355,6 +363,10 @@ class RegionView {
   final int speed;
   final bool keepPitch;
 
+  /// Tenths of a dB.
+  final int gain;
+  final bool normalize;
+
   const RegionView({
     required this.id,
     required this.start,
@@ -364,6 +376,8 @@ class RegionView {
     required this.export_,
     required this.speed,
     required this.keepPitch,
+    required this.gain,
+    required this.normalize,
   });
 
   @override
@@ -375,7 +389,9 @@ class RegionView {
       color.hashCode ^
       export_.hashCode ^
       speed.hashCode ^
-      keepPitch.hashCode;
+      keepPitch.hashCode ^
+      gain.hashCode ^
+      normalize.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -389,5 +405,7 @@ class RegionView {
           color == other.color &&
           export_ == other.export_ &&
           speed == other.speed &&
-          keepPitch == other.keepPitch;
+          keepPitch == other.keepPitch &&
+          gain == other.gain &&
+          normalize == other.normalize;
 }

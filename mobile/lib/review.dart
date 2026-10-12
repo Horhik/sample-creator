@@ -41,9 +41,28 @@ class _ReviewPageState extends State<ReviewPage> {
   /// Landscape: filters and export in a panel on the right.
   bool _panelOpen = true;
 
-  /// Region whose preview is playing.
+  /// Region whose preview is playing, and the one whose processed sound is
+  /// being rendered before it can play.
   int? _playing;
+  int? _preparing;
   Timer? _timer;
+  Timer? _fast;
+
+  /// Where the preview is, 0..1, for the line on its mini waveform.
+  final _progress = ValueNotifier<double?>(null);
+
+  /// What the playing preview is: source frames from `_playStart`, or a
+  /// render (from 0); and how long it is.
+  bool _fromSource = true;
+  int _playStart = 0;
+  int _playLen = 1;
+  DateTime _startedAt = DateTime.now();
+
+  /// Bumped on every start or stop, so a slow render does not start late.
+  int _generation = 0;
+
+  /// Processed regions rendered (or being rendered) in the background.
+  final _prerendered = <String>{};
 
   late final _template = TextEditingController(
     text: api.getSetting(key: 'export.template') ?? api.defaultTemplate(),
@@ -66,6 +85,8 @@ class _ReviewPageState extends State<ReviewPage> {
   @override
   void dispose() {
     _timer?.cancel();
+    _fast?.cancel();
+    _progress.dispose();
     _template.dispose();
     super.dispose();
   }
@@ -75,19 +96,57 @@ class _ReviewPageState extends State<ReviewPage> {
     // Redraw mini waveforms while summaries are computed, and notice when a
     // preview reaches its end.
     _timer = Timer.periodic(const Duration(milliseconds: 400), (_) {
-      if (!mounted) return;
-      setState(() {
-        if (_playing != null && !engine.isPlaying()) _playing = null;
-      });
+      if (mounted) setState(() {});
+    });
+    // The progress line, and the end of a preview.
+    _fast = Timer.periodic(const Duration(milliseconds: 50), (_) {
+      if (!mounted || _playing == null) return;
+      final playing = engine.isPlaying();
+      final grace = DateTime.now().difference(_startedAt).inMilliseconds < 400;
+      if (!playing && !grace) {
+        setState(() => _playing = null);
+        _progress.value = null;
+        return;
+      }
+      final pos = engine.position() - (_fromSource ? _playStart : 0);
+      _progress.value = (pos / _playLen).clamp(0.0, 1.0);
     });
   }
 
   void _leave() {
     _timer?.cancel();
-    _timer = null;
-    api.stopPreview();
+    _fast?.cancel();
+    _timer = _fast = null;
+    _stopPreview(redraw: false);
     api.reviewClose();
-    _playing = null;
+  }
+
+  void _stopPreview({bool redraw = true}) {
+    _generation++;
+    api.stopPreview();
+    _playing = _preparing = null;
+    _progress.value = null;
+    if (redraw && mounted) setState(() {});
+  }
+
+  /// Key of a region's sound: a new render is needed when it changes.
+  String _soundKey(api.ReviewRegion r) =>
+      '${r.id}:${r.start}:${r.end}:${r.speed}:${r.keepPitch}:${r.splicedFrames}'
+      ':${r.fx.gain}:${r.fx.normalize}:${r.fx.trimDb}:${r.fx.compress}:${r.fx.denoise}';
+
+  /// Renders processed regions one by one so they play and draw at once.
+  Future<void> _prerenderAll() async {
+    for (final r in List.of(_rows)) {
+      if (!r.processed || !r.available) continue;
+      if (!_prerendered.add(_soundKey(r))) continue;
+      try {
+        await api.prerender(id: r.id);
+      } catch (_) {
+        // Shown when played instead.
+      }
+      if (!mounted || !widget.active) return;
+      setState(() {});
+    }
   }
 
   Future<void> _refresh() async {
@@ -97,6 +156,7 @@ class _ReviewPageState extends State<ReviewPage> {
         _rows = rows;
         _loaded = true;
       });
+      _prerenderAll();
     }
   }
 
@@ -124,11 +184,11 @@ class _ReviewPageState extends State<ReviewPage> {
   }
 
   void _togglePreview(api.ReviewRegion r) async {
-    if (_playing == r.id) {
-      api.stopPreview();
-      setState(() => _playing = null);
+    if (_playing == r.id || _preparing == r.id) {
+      _stopPreview();
       return;
     }
+    _stopPreview();
     if (!r.available) {
       _toast(
         tr(
@@ -138,17 +198,38 @@ class _ReviewPageState extends State<ReviewPage> {
       );
       return;
     }
-    setState(() => _playing = r.id);
-    // A changed speed is heard as it will be exported.
-    if (r.speed != 100) {
+    final generation = _generation;
+    // A processed region is heard as it will be exported (rendered once,
+    // then from the cache).
+    if (r.processed) {
+      setState(() => _preparing = r.id);
       try {
-        await api.previewProcessed(id: r.id, from: 0);
+        final len = await api.previewProcessed(id: r.id, from: 0);
+        if (generation != _generation || !mounted) {
+          if (generation != _generation) return;
+          api.stopPreview();
+          return;
+        }
+        setState(() {
+          _preparing = null;
+          _playing = r.id;
+          _fromSource = false;
+          _playLen = math.max(1, len);
+          _startedAt = DateTime.now();
+        });
       } catch (e) {
         _toast(friendlyError(e));
-        setState(() => _playing = null);
+        if (mounted) setState(() => _preparing = null);
       }
     } else {
       api.previewSource(path: r.path, start: r.start, end: r.end);
+      setState(() {
+        _playing = r.id;
+        _fromSource = true;
+        _playStart = r.start;
+        _playLen = math.max(1, r.end - r.start);
+        _startedAt = DateTime.now();
+      });
     }
   }
 
@@ -210,8 +291,7 @@ class _ReviewPageState extends State<ReviewPage> {
     if (dest == null || !mounted) return;
     api.setSetting(key: 'export.template', value: _template.text);
     api.setSetting(key: 'export.format', value: _format);
-    api.stopPreview();
-    setState(() => _playing = null);
+    _stopPreview();
 
     final names = await api.exportPreview(
       ids: idList,
@@ -546,19 +626,31 @@ class _ReviewPageState extends State<ReviewPage> {
                     builder: (context, c) => CustomPaint(
                       size: Size(c.maxWidth, 44),
                       painter: MiniWavePainter(
-                        peaks: r.available
-                            ? api.miniPeaks(
-                                path: r.path,
-                                channels: r.fileChannels,
-                                totalFrames: r.totalFrames,
-                                start: r.start,
-                                end: r.end,
-                                columns: waveColumns(
-                                  (r.end - r.start).toDouble(),
-                                  c.maxWidth,
-                                ),
-                              )
-                            : engine.PeaksView(done: 0, data: Float32List(0)),
+                        // A processed region shows its result once rendered.
+                        peaks:
+                            (r.processed && r.available
+                                ? api.processedPeaks(
+                                    id: r.id,
+                                    columns: c.maxWidth.floor(),
+                                  )
+                                : null) ??
+                            (r.available
+                                ? api.miniPeaks(
+                                    path: r.path,
+                                    channels: r.fileChannels,
+                                    totalFrames: r.totalFrames,
+                                    start: r.start,
+                                    end: r.end,
+                                    columns: waveColumns(
+                                      (r.end - r.start).toDouble(),
+                                      c.maxWidth,
+                                    ),
+                                  )
+                                : engine.PeaksView(
+                                    done: 0,
+                                    data: Float32List(0),
+                                  )),
+                        progress: _playing == r.id ? _progress : null,
                         channels: r.fileChannels,
                         color: color,
                       ),
@@ -608,10 +700,21 @@ class _ReviewPageState extends State<ReviewPage> {
               Row(
                 children: [
                   IconButton(
-                    tooltip: tr('Прослушать', 'Listen'),
-                    icon: Icon(
-                      _playing == r.id ? Icons.stop : Icons.play_arrow,
-                    ),
+                    tooltip: _preparing == r.id
+                        ? tr(
+                            'Готовится — нажмите, чтобы отменить',
+                            'Preparing — tap to cancel',
+                          )
+                        : tr('Прослушать', 'Listen'),
+                    icon: _preparing == r.id
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(
+                            _playing == r.id ? Icons.stop : Icons.play_arrow,
+                          ),
                     onPressed: () => _togglePreview(r),
                   ),
                   if (r.fileChannels > 1) _channelMenu(r),
@@ -688,19 +791,103 @@ class _ReviewPageState extends State<ReviewPage> {
     ],
   );
 
-  Widget _exportButton() => SizedBox(
-    width: double.infinity,
-    child: FilledButton.icon(
-      icon: const Icon(Icons.save_alt),
-      label: Text(
-        tr(
-          'Экспортировать (${_toExport.length})…',
-          'Export (${_toExport.length})…',
+  /// Delete (left) and export (right) the regions that are ticked.
+  Widget _exportButton() => Row(
+    children: [
+      OutlinedButton.icon(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: Theme.of(context).colorScheme.error,
+        ),
+        icon: const Icon(Icons.delete_outline),
+        label: Text(tr('Удалить', 'Delete')),
+        onPressed: _toExport.isEmpty ? null : _deleteTicked,
+      ),
+      const SizedBox(width: 8),
+      Expanded(
+        child: FilledButton.icon(
+          icon: const Icon(Icons.save_alt),
+          label: Text(
+            tr(
+              'Экспортировать (${_toExport.length})…',
+              'Export (${_toExport.length})…',
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+          onPressed: _toExport.isEmpty ? null : _export,
         ),
       ),
-      onPressed: _toExport.isEmpty ? null : _export,
-    ),
+    ],
   );
+
+  /// Asks, listing them, then deletes every ticked region.
+  Future<void> _deleteTicked() async {
+    final ticked = _toExport.toList();
+    if (ticked.isEmpty) return;
+    String title(api.ReviewRegion r) =>
+        '${r.name.isEmpty ? tr('Без имени', 'Untitled') : r.name} · ${r.fileTitle}';
+    const shown = 12;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.delete_outline),
+        title: Text(
+          tr(
+            'Удалить регионы (${ticked.length})?',
+            'Delete ${ticked.length} regions?',
+          ),
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final r in ticked.take(shown)) Text('• ${title(r)}'),
+              if (ticked.length > shown)
+                Text(
+                  tr(
+                    '…и ещё ${ticked.length - shown}',
+                    '…and ${ticked.length - shown} more',
+                  ),
+                ),
+              const SizedBox(height: 12),
+              Text(
+                tr(
+                  'Удаляются только регионы, записи не трогаются.',
+                  'Only the regions go; the recordings stay as they are.',
+                ),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(tr('Отмена', 'Cancel')),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(tr('Удалить', 'Delete')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    _stopPreview();
+    try {
+      final n = await api.reviewDelete(
+        ids: Int64List.fromList([for (final r in ticked) r.id]),
+      );
+      _toast(tr('Удалено регионов: $n', 'Regions deleted: $n'));
+    } catch (e) {
+      _toast(friendlyError(e));
+    }
+    await _refresh();
+  }
 
   /// Portrait: template, format and the export button under the list.
   Widget _exportBar() {

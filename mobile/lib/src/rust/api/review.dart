@@ -8,7 +8,7 @@ import 'engine.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `export_list`, `find_region`, `process_region`, `reload_open`, `update_region`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `eq`, `from`, `from`, `from`, `from`
 
 /// A remembered value: last folder, export folder, name template…
 String? getSetting({required String key}) =>
@@ -123,6 +123,14 @@ Future<void> setPartBounds({
 Future<void> resetParts({required PlatformInt64 id}) =>
     RustLib.instance.api.crateApiReviewResetParts(id: id);
 
+/// All volume and dynamics settings of a region at once (processing undo).
+Future<void> reviewSetFx({required PlatformInt64 id, required FxView fx}) =>
+    RustLib.instance.api.crateApiReviewReviewSetFx(id: id, fx: fx);
+
+/// Deletes these regions (whatever recording they are in). Returns how many.
+Future<int> reviewDelete({required Int64List ids}) =>
+    RustLib.instance.api.crateApiReviewReviewDelete(ids: ids);
+
 Future<void> reviewRename({required PlatformInt64 id, required String name}) =>
     RustLib.instance.api.crateApiReviewReviewRename(id: id, name: name);
 
@@ -163,10 +171,22 @@ void previewSource({
 /// output-timeline frame `from` (before the speed change). The player's
 /// position is then in rendered frames: multiply by speed / 100 to get back
 /// to the timeline.
-Future<void> previewProcessed({
+///
+/// Returns the length of the rendered sound in frames (for a progress line).
+/// Renders once per set of settings; later calls play from the cache.
+Future<PlatformInt64> previewProcessed({
   required PlatformInt64 id,
   required PlatformInt64 from,
 }) => RustLib.instance.api.crateApiReviewPreviewProcessed(id: id, from: from);
+
+/// Renders a processed region in the background so it plays without a wait.
+Future<void> prerender({required PlatformInt64 id}) =>
+    RustLib.instance.api.crateApiReviewPrerender(id: id);
+
+/// Waveform of the processed sound, if it is rendered already (else `None`:
+/// draw the source and call `prerender`).
+PeaksView? processedPeaks({required PlatformInt64 id, required int columns}) =>
+    RustLib.instance.api.crateApiReviewProcessedPeaks(id: id, columns: columns);
 
 void stopPreview() => RustLib.instance.api.crateApiReviewStopPreview();
 
@@ -270,6 +290,47 @@ class FormatOption {
           label == other.label;
 }
 
+/// Volume and dynamics (see `core::Fx`).
+class FxView {
+  /// Tenths of a dB.
+  final int gain;
+  final bool normalize;
+
+  /// Trim quiet ends below this level, dBFS; `None` is off.
+  final int? trimDb;
+
+  /// Compressor amount, 0–100.
+  final int compress;
+  final bool denoise;
+
+  const FxView({
+    required this.gain,
+    required this.normalize,
+    this.trimDb,
+    required this.compress,
+    required this.denoise,
+  });
+
+  @override
+  int get hashCode =>
+      gain.hashCode ^
+      normalize.hashCode ^
+      trimDb.hashCode ^
+      compress.hashCode ^
+      denoise.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FxView &&
+          runtimeType == other.runtimeType &&
+          gain == other.gain &&
+          normalize == other.normalize &&
+          trimDb == other.trimDb &&
+          compress == other.compress &&
+          denoise == other.denoise;
+}
+
 class PartView {
   /// Source frames.
   final PlatformInt64 start;
@@ -347,6 +408,13 @@ class ReviewRegion {
 
   /// Frames after splicing, before the speed change: the output timeline.
   final PlatformInt64 splicedFrames;
+  final FxView fx;
+
+  /// Sounds different from a plain copy (speed, cuts or effects).
+  final bool processed;
+
+  /// Short labels of the effects in use, in the interface language.
+  final List<String> fxNotes;
 
   const ReviewRegion({
     required this.id,
@@ -369,6 +437,9 @@ class ReviewRegion {
     required this.edited,
     required this.outputFrames,
     required this.splicedFrames,
+    required this.fx,
+    required this.processed,
+    required this.fxNotes,
   });
 
   @override
@@ -392,7 +463,10 @@ class ReviewRegion {
       parts.hashCode ^
       edited.hashCode ^
       outputFrames.hashCode ^
-      splicedFrames.hashCode;
+      splicedFrames.hashCode ^
+      fx.hashCode ^
+      processed.hashCode ^
+      fxNotes.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -418,5 +492,8 @@ class ReviewRegion {
           parts == other.parts &&
           edited == other.edited &&
           outputFrames == other.outputFrames &&
-          splicedFrames == other.splicedFrames;
+          splicedFrames == other.splicedFrames &&
+          fx == other.fx &&
+          processed == other.processed &&
+          fxNotes == other.fxNotes;
 }

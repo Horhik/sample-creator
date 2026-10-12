@@ -306,6 +306,13 @@ class _EditorPageState extends State<EditorPage>
   }
 
   void _applyRange() {
+    // A selected region made louder is heard louder while marking up.
+    final r = _selectedRegion;
+    engine.setGain(
+      gain: _selection == null && r != null && !r.normalize
+          ? math.pow(10, r.gain / 200).toDouble()
+          : 1.0,
+    );
     final range = _loopRange;
     if (range == null) {
       engine.setRange(start: 0, end: null, looping: false);
@@ -663,6 +670,8 @@ class _EditorPageState extends State<EditorPage>
                     export_: x.export_,
                     speed: x.speed,
                     keepPitch: x.keepPitch,
+                    gain: x.gain,
+                    normalize: x.normalize,
                   )
                 : x,
         ],

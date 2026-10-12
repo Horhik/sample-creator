@@ -31,6 +31,9 @@ class _ItemSheetState extends State<ItemSheet> {
   engine.RegionView? _region;
   engine.MarkerView? _marker;
 
+  /// The volume slider moves freely; the library is written on release.
+  double? _dragGain;
+
   bool get _isRegion => widget.item.kind == Kind.region;
   engine.ItemKind get _kind =>
       _isRegion ? engine.ItemKind.region : engine.ItemKind.marker;
@@ -153,8 +156,37 @@ class _ItemSheetState extends State<ItemSheet> {
   }
 
   List<Widget> _regionControls(engine.RegionView r) {
+    final gain = (_dragGain ?? r.gain / 10).toDouble();
     return [
       const SizedBox(height: 8),
+      Row(
+        children: [
+          const Icon(Icons.volume_up_outlined),
+          const SizedBox(width: 12),
+          Text(tr('Громкость', 'Volume')),
+          const Spacer(),
+          Text(gainLabel((gain * 10).round())),
+        ],
+      ),
+      Slider(
+        min: -24,
+        max: 24,
+        divisions: 96,
+        value: gain.clamp(-24, 24),
+        onChanged: r.normalize ? null : (v) => setState(() => _dragGain = v),
+        onChangeEnd: (v) {
+          _dragGain = null;
+          _do(() => engine.setRegionGain(id: r.id, gain: (v * 10).round()));
+        },
+      ),
+      if (r.normalize)
+        Text(
+          tr(
+            'Включена нормализация (в «Обработке»)',
+            'Normalising is on (on the Processing page)',
+          ),
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
       SwitchListTile(
         contentPadding: EdgeInsets.zero,
         title: Text(tr('В экспорт', 'Export')),

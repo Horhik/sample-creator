@@ -1,7 +1,6 @@
 //! Everything across recordings: the region review, previews and export.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -10,7 +9,7 @@ use flutter_rust_bridge::frb;
 use sample_creator_engine::audio::peaks;
 use sample_creator_engine::core::history::Store;
 use sample_creator_engine::core::parts::{output_to_source, positions, spliced_len};
-use sample_creator_engine::core::{ChannelMode, Region};
+use sample_creator_engine::core::{ChannelMode, Fx, Region, fx_notes};
 use sample_creator_engine::export::{self, OutputFormat, Source};
 use sample_creator_engine::store::FileRow;
 
@@ -89,6 +88,48 @@ pub struct ReviewRegion {
     pub output_frames: i64,
     /// Frames after splicing, before the speed change: the output timeline.
     pub spliced_frames: i64,
+    pub fx: FxView,
+    /// Sounds different from a plain copy (speed, cuts or effects).
+    pub processed: bool,
+    /// Short labels of the effects in use, in the interface language.
+    pub fx_notes: Vec<String>,
+}
+
+/// Volume and dynamics (see `core::Fx`).
+#[derive(Clone, Copy)]
+pub struct FxView {
+    /// Tenths of a dB.
+    pub gain: i16,
+    pub normalize: bool,
+    /// Trim quiet ends below this level, dBFS; `None` is off.
+    pub trim_db: Option<i16>,
+    /// Compressor amount, 0–100.
+    pub compress: u8,
+    pub denoise: bool,
+}
+
+impl From<Fx> for FxView {
+    fn from(f: Fx) -> Self {
+        FxView {
+            gain: f.gain,
+            normalize: f.normalize,
+            trim_db: f.trim_db,
+            compress: f.compress,
+            denoise: f.denoise,
+        }
+    }
+}
+
+impl From<FxView> for Fx {
+    fn from(f: FxView) -> Self {
+        Fx {
+            gain: f.gain,
+            normalize: f.normalize,
+            trim_db: f.trim_db,
+            compress: f.compress.min(100),
+            denoise: f.denoise,
+        }
+    }
 }
 
 pub struct PartView {
@@ -125,6 +166,9 @@ pub fn all_regions() -> Result<Vec<ReviewRegion>> {
                     .collect()
             },
             spliced_frames: spliced_len(&r.effective_parts()) as i64,
+            fx: r.fx.into(),
+            processed: r.is_processed(),
+            fx_notes: fx_notes(&r.fx),
             edited: r.is_edited(),
             output_frames: r.output_len() as i64,
             id: r.id,
@@ -313,6 +357,43 @@ pub fn reset_parts(id: i64) -> Result<()> {
     process_region(id, Region::reset_parts)
 }
 
+/// All volume and dynamics settings of a region at once (processing undo).
+pub fn review_set_fx(id: i64, fx: FxView) -> Result<()> {
+    process_region(id, |r| r.fx = fx.into())
+}
+
+/// Deletes these regions (whatever recording they are in). Returns how many.
+pub fn review_delete(ids: Vec<i64>) -> Result<u32> {
+    let state = state()?;
+    let mut files = Vec::new();
+    {
+        let library = library()?;
+        let mut history = state.processing.lock().unwrap();
+        let regions: Vec<_> = library
+            .all_regions()?
+            .into_iter()
+            .filter(|(_, r)| ids.contains(&r.id))
+            .collect();
+        library.transaction(&mut || {
+            for (_, r) in &regions {
+                library.delete_region(r.id)?;
+            }
+            Ok(())
+        })?;
+        for (f, r) in &regions {
+            history.forget(r.id);
+            files.push(f.id);
+        }
+    }
+    // The open recording shows what is stored; its undo steps are stale.
+    let mut open = state.open.lock().unwrap();
+    if let Some(o) = open.as_mut().filter(|o| files.contains(&o.rec.record.id)) {
+        o.rec.markup = library()?.markup(o.rec.record.id)?;
+        o.history = Default::default();
+    }
+    Ok(files.len() as u32)
+}
+
 pub fn review_rename(id: i64, name: String) -> Result<()> {
     let name = name.trim().to_owned();
     update_region(id, |r| r.name = name)
@@ -385,17 +466,56 @@ pub fn preview_source(path: String, start: i64, end: i64) {
 /// output-timeline frame `from` (before the speed change). The player's
 /// position is then in rendered frames: multiply by speed / 100 to get back
 /// to the timeline.
-pub fn preview_processed(id: i64, from: i64) -> Result<()> {
+///
+/// Returns the length of the rendered sound in frames (for a progress line).
+/// Renders once per set of settings; later calls play from the cache.
+pub fn preview_processed(id: i64, from: i64) -> Result<i64> {
     let (file, region) = find_region(id)?;
-    let (info, samples) = export::render_to_memory(&file.path, &region)?;
+    let r = export::cache::rendered(&file.path, &region)?;
     if let Some(p) = player() {
-        p.load_memory(Arc::new(samples), info.channels, info.sample_rate);
+        p.load_memory(r.samples.clone(), r.channels, r.sample_rate);
         let at = frame(from) * 100 / u64::from(region.speed.max(1));
         p.set_range(at, None, false);
         p.seek(at);
         p.play();
     }
+    Ok(r.frames() as i64)
+}
+
+/// Renders a processed region in the background so it plays without a wait.
+pub fn prerender(id: i64) -> Result<()> {
+    let (file, region) = find_region(id)?;
+    if region.is_processed() && file.path.exists() {
+        export::cache::rendered(&file.path, &region)?;
+    }
     Ok(())
+}
+
+/// Waveform of the processed sound, if it is rendered already (else `None`:
+/// draw the source and call `prerender`).
+#[frb(sync)]
+pub fn processed_peaks(id: i64, columns: u32) -> Option<PeaksView> {
+    let (file, region) = find_region(id).ok()?;
+    let r = export::cache::cached(&file.path, &region)?;
+    let ch = usize::from(r.channels.max(1));
+    let frames = r.samples.len() / ch;
+    let columns = (columns as usize).max(1);
+    let mut data = Vec::with_capacity(ch * columns * 2);
+    for c in 0..ch {
+        for col in 0..columns {
+            let a = col * frames / columns;
+            let b = ((col + 1) * frames / columns).max(a + 1).min(frames);
+            let (mut lo, mut hi) = (0f32, 0f32);
+            for f in a..b {
+                let v = r.samples[f * ch + c];
+                lo = lo.min(v);
+                hi = hi.max(v);
+            }
+            data.push(lo);
+            data.push(hi);
+        }
+    }
+    Some(PeaksView { done: 1.0, data })
 }
 
 #[frb(sync)]

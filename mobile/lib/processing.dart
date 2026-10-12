@@ -36,6 +36,10 @@ class _ProcessingPageState extends State<ProcessingPage> {
 
   /// The slider moves freely; the library is written when the finger lifts.
   double? _dragSpeed;
+
+  /// The volume / dynamics slider being dragged, and its value.
+  String? _dragFx;
+  double _dragFxValue = 0;
   _Preview _preview = _Preview.none;
 
   Timer? _timer;
@@ -61,6 +65,7 @@ class _ProcessingPageState extends State<ProcessingPage> {
     if (!widget.active && old.active) {
       _timer?.cancel();
       _stop();
+      _prerenderSelected();
     }
   }
 
@@ -68,6 +73,15 @@ class _ProcessingPageState extends State<ProcessingPage> {
   void dispose() {
     _timer?.cancel();
     super.dispose();
+  }
+
+  /// Leaving or switching away: render the processed region in the
+  /// background so the review (and the next visit) plays it at once.
+  void _prerenderSelected() {
+    final r = _region;
+    if (r != null && r.processed && r.available) {
+      api.prerender(id: r.id).catchError((_) {});
+    }
   }
 
   void _enter() {
@@ -280,7 +294,9 @@ class _ProcessingPageState extends State<ProcessingPage> {
                 Expanded(
                   child: r == null
                       ? Center(child: _hint())
-                      : ListView(children: [_settings(r), _parts(r)]),
+                      : ListView(
+                          children: [_settings(r), _effects(r), _parts(r)],
+                        ),
                 ),
               ],
             )
@@ -288,6 +304,7 @@ class _ProcessingPageState extends State<ProcessingPage> {
               children: [
                 if (r != null) ...[
                   _settings(r),
+                  _effects(r),
                   _parts(r),
                   const Divider(height: 1),
                 ] else
@@ -437,6 +454,145 @@ class _ProcessingPageState extends State<ProcessingPage> {
                 ),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _setFx(api.ReviewRegion r, api.FxView fx) =>
+      _edit(() => api.reviewSetFx(id: r.id, fx: fx));
+
+  api.FxView _fx(
+    api.FxView f, {
+    int? gain,
+    bool? normalize,
+    int? Function()? trimDb,
+    int? compress,
+    bool? denoise,
+  }) => api.FxView(
+    gain: gain ?? f.gain,
+    normalize: normalize ?? f.normalize,
+    trimDb: trimDb != null ? trimDb() : f.trimDb,
+    compress: compress ?? f.compress,
+    denoise: denoise ?? f.denoise,
+  );
+
+  /// One slider of the effects block: shows the dragged value, saves on release.
+  Widget _fxSlider({
+    required String key,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required void Function(double) save,
+    bool enabled = true,
+  }) {
+    return Slider(
+      min: min,
+      max: max,
+      divisions: divisions,
+      value: (_dragFx == key ? _dragFxValue : value).clamp(min, max),
+      onChanged: enabled
+          ? (v) => setState(() {
+              _dragFx = key;
+              _dragFxValue = v;
+            })
+          : null,
+      onChangeEnd: (v) {
+        _dragFx = null;
+        save(v);
+      },
+    );
+  }
+
+  Widget _effects(api.ReviewRegion r) {
+    final theme = Theme.of(context);
+    final f = r.fx;
+    double shown(String key, double v) => _dragFx == key ? _dragFxValue : v;
+    final gain = shown('gain', f.gain / 10);
+    final trim = shown('trim', (f.trimDb ?? -45).toDouble());
+    final comp = shown('compress', f.compress.toDouble());
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Divider(),
+          Text(
+            tr('Громкость и динамика', 'Volume and dynamics'),
+            style: theme.textTheme.titleMedium,
+          ),
+          Row(
+            children: [
+              Text(tr('Громкость', 'Gain')),
+              const Spacer(),
+              Text(gainLabel((gain * 10).round())),
+            ],
+          ),
+          _fxSlider(
+            key: 'gain',
+            value: f.gain / 10,
+            min: -24,
+            max: 24,
+            divisions: 96,
+            enabled: !f.normalize,
+            save: (v) => _setFx(r, _fx(f, gain: (v * 10).round())),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(tr('Нормализовать', 'Normalise')),
+            subtitle: Text(tr('Пик до −1 дБ', 'Peak to −1 dB')),
+            value: f.normalize,
+            onChanged: (v) => _setFx(r, _fx(f, normalize: v)),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(
+              tr('Обрезать тишину по краям', 'Trim silence at the ends'),
+            ),
+            subtitle: Text(
+              '${tr('тише', 'below')} ${trim.round()} ${tr('дБ', 'dB')}',
+            ),
+            value: f.trimDb != null,
+            onChanged: (v) =>
+                _setFx(r, _fx(f, trimDb: () => v ? trim.round() : null)),
+          ),
+          if (f.trimDb != null)
+            _fxSlider(
+              key: 'trim',
+              value: f.trimDb!.toDouble(),
+              min: -80,
+              max: -10,
+              divisions: 70,
+              save: (v) => _setFx(r, _fx(f, trimDb: () => v.round())),
+            ),
+          Row(
+            children: [
+              Text(tr('Компрессор', 'Compressor')),
+              const Spacer(),
+              Text(comp == 0 ? tr('выкл.', 'off') : '${comp.round()} %'),
+            ],
+          ),
+          _fxSlider(
+            key: 'compress',
+            value: f.compress.toDouble(),
+            min: 0,
+            max: 100,
+            divisions: 20,
+            save: (v) => _setFx(r, _fx(f, compress: v.round())),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(tr('Шумоподавление', 'Noise reduction')),
+            subtitle: Text(
+              tr(
+                'Для речи; на музыке может звучать странно',
+                'For speech; may sound odd on music',
+              ),
+            ),
+            value: f.denoise,
+            onChanged: (v) => _setFx(r, _fx(f, denoise: v)),
           ),
         ],
       ),
@@ -619,6 +775,7 @@ class _ProcessingPageState extends State<ProcessingPage> {
           trailing: r.edited ? const Icon(Icons.content_cut, size: 18) : null,
           onTap: () {
             _stop();
+            _prerenderSelected();
             setState(() {
               _selected = r.id;
               _cursor = null;

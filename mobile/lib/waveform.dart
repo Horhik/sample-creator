@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'l10n.dart';
 
@@ -332,11 +333,15 @@ class MiniWavePainter extends CustomPainter {
   final int channels;
   final Color color;
 
+  /// Where a preview is (0..1): a line across the wave. Repaints on its own.
+  final ValueListenable<double?>? progress;
+
   MiniWavePainter({
     required this.peaks,
     required this.channels,
     required this.color,
-  });
+    this.progress,
+  }) : super(repaint: progress);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -357,6 +362,17 @@ class MiniWavePainter extends CustomPainter {
       amp: size.height / 2 - 2,
       paint: Paint()..color = color,
     );
+    final p = progress?.value;
+    if (p != null) {
+      final x = p * size.width;
+      canvas.drawLine(
+        Offset(x, 0),
+        Offset(x, size.height),
+        Paint()
+          ..color = Colors.white
+          ..strokeWidth = 2,
+      );
+    }
   }
 
   @override
@@ -364,8 +380,19 @@ class MiniWavePainter extends CustomPainter {
 }
 
 /// " → 2.10 с (×2, тон сохранён, склейка)" for a processed region, else "".
+/// "+3.5 dB", "−2 dB", "0 dB" for a gain in tenths of a dB.
+String gainLabel(int tenths) {
+  final db = tenths / 10;
+  final unit = tr('дБ', 'dB');
+  if (tenths == 0) return '0 $unit';
+  final text = db == db.roundToDouble()
+      ? db.toStringAsFixed(0)
+      : db.toStringAsFixed(1);
+  return '${db > 0 ? '+' : ''}$text $unit';
+}
+
 String regionNote(review.ReviewRegion r) {
-  if (r.speed == 100 && !r.edited) return '';
+  if (!r.processed) return '';
   final notes = <String>[];
   if (r.speed != 100) {
     var factor = (r.speed / 100).toStringAsFixed(2);
@@ -374,6 +401,7 @@ String regionNote(review.ReviewRegion r) {
     if (r.keepPitch) notes.add(tr('тон сохранён', 'pitch kept'));
   }
   if (r.edited) notes.add(tr('склейка', 'spliced'));
+  notes.addAll(r.fxNotes);
   final out = r.outputFrames / r.sampleRate;
   return ' → ${out.toStringAsFixed(2)} $sec (${notes.join(', ')})';
 }

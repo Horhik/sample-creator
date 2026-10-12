@@ -37,7 +37,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  FxView dco_decode_box_autoadd_fx_view(dynamic raw);
+
+  @protected
+  int dco_decode_box_autoadd_i_16(dynamic raw);
+
+  @protected
   PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
+
+  @protected
+  PeaksView dco_decode_box_autoadd_peaks_view(dynamic raw);
 
   @protected
   SyncInfo dco_decode_box_autoadd_sync_info(dynamic raw);
@@ -62,6 +71,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   FormatOption dco_decode_format_option(dynamic raw);
+
+  @protected
+  FxView dco_decode_fx_view(dynamic raw);
+
+  @protected
+  int dco_decode_i_16(dynamic raw);
 
   @protected
   int dco_decode_i_32(dynamic raw);
@@ -115,7 +130,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
+  int? dco_decode_opt_box_autoadd_i_16(dynamic raw);
+
+  @protected
   PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
+
+  @protected
+  PeaksView? dco_decode_opt_box_autoadd_peaks_view(dynamic raw);
 
   @protected
   SyncInfo? dco_decode_opt_box_autoadd_sync_info(dynamic raw);
@@ -168,7 +189,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  FxView sse_decode_box_autoadd_fx_view(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_box_autoadd_i_16(SseDeserializer deserializer);
+
+  @protected
   PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
+
+  @protected
+  PeaksView sse_decode_box_autoadd_peaks_view(SseDeserializer deserializer);
 
   @protected
   SyncInfo sse_decode_box_autoadd_sync_info(SseDeserializer deserializer);
@@ -193,6 +223,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   FormatOption sse_decode_format_option(SseDeserializer deserializer);
+
+  @protected
+  FxView sse_decode_fx_view(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_i_16(SseDeserializer deserializer);
 
   @protected
   int sse_decode_i_32(SseDeserializer deserializer);
@@ -252,7 +288,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
+  int? sse_decode_opt_box_autoadd_i_16(SseDeserializer deserializer);
+
+  @protected
   PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
+
+  @protected
+  PeaksView? sse_decode_opt_box_autoadd_peaks_view(
+    SseDeserializer deserializer,
+  );
 
   @protected
   SyncInfo? sse_decode_opt_box_autoadd_sync_info(SseDeserializer deserializer);
@@ -309,8 +353,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_fx_view(FxView self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_i_16(int self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_i_64(
     PlatformInt64 self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_peaks_view(
+    PeaksView self,
     SseSerializer serializer,
   );
 
@@ -343,6 +399,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_format_option(FormatOption self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_fx_view(FxView self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_i_16(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
@@ -420,8 +482,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_i_16(int? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_i_64(
     PlatformInt64? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_peaks_view(
+    PeaksView? self,
     SseSerializer serializer,
   );
 

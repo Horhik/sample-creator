@@ -250,6 +250,9 @@ pub struct RegionView {
     /// Percent, 100 = normal.
     pub speed: u16,
     pub keep_pitch: bool,
+    /// Tenths of a dB.
+    pub gain: i16,
+    pub normalize: bool,
 }
 
 pub struct MarkupView {
@@ -287,6 +290,8 @@ pub fn markup() -> Result<MarkupView> {
                     export: r.export,
                     speed: r.speed,
                     keep_pitch: r.keep_pitch,
+                    gain: r.fx.gain,
+                    normalize: r.fx.normalize,
                 })
                 .collect(),
             can_undo: open.history.can_undo(),
@@ -334,6 +339,7 @@ pub fn add_region(start: i64, end: i64, color: u8) -> Result<i64> {
         channels: ChannelMode::AsSource,
         speed: 100,
         keep_pitch: false,
+        fx: Default::default(),
         parts: Vec::new(),
     })])?
     .context("region was not created")
@@ -366,6 +372,12 @@ pub fn set_region_bounds(id: i64, start: i64, end: i64) -> Result<()> {
         r.start = start;
         r.end = end;
     })
+}
+
+/// Region volume in tenths of a dB (above zero: louder than the source).
+pub fn set_region_gain(id: i64, gain: i16) -> Result<()> {
+    use sample_creator_engine::core::{GAIN_MAX, GAIN_MIN};
+    edit_region(id, |r| r.fx.gain = gain.clamp(GAIN_MIN, GAIN_MAX))
 }
 
 pub fn set_region_export(id: i64, export: bool) -> Result<()> {
@@ -451,6 +463,14 @@ pub fn seek(pos: i64) {
 pub fn set_range(start: i64, end: Option<i64>, looping: bool) {
     if let Some(p) = player() {
         p.set_range(frame(start), end.map(frame), looping);
+    }
+}
+
+/// Volume of what plays, as a factor: a louder region is heard louder.
+#[frb(sync)]
+pub fn set_gain(gain: f32) {
+    if let Some(p) = player() {
+        p.set_gain(gain);
     }
 }
 
