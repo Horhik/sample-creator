@@ -321,7 +321,7 @@ pub struct Report {
 pub fn missing_sources(regions: &[(Source, Region)]) -> Vec<PathBuf> {
     let missing: std::collections::BTreeSet<_> = regions
         .iter()
-        .filter(|(s, _)| !s.path.exists())
+        .filter(|(s, _)| !crate::vfs::exists(&s.path))
         .map(|(s, _)| s.path.clone())
         .collect();
     missing.into_iter().collect()

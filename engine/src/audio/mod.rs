@@ -3,7 +3,6 @@ pub mod decode;
 pub mod peaks;
 pub mod player;
 
-use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
@@ -26,8 +25,8 @@ pub fn is_supported(path: impl AsRef<Path>) -> bool {
 /// size plus the first and last megabyte. Cheap even over a slow USB card reader.
 pub fn fingerprint(path: &Path) -> io::Result<u64> {
     const SPAN: u64 = 1 << 20;
-    let mut file = File::open(path)?;
-    let len = file.metadata()?.len();
+    let mut file = crate::vfs::open(path)?;
+    let len = file.len()?;
 
     let mut hasher = xxhash_rust::xxh3::Xxh3::new();
     hasher.update(&len.to_le_bytes());

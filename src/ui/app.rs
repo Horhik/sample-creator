@@ -16,7 +16,7 @@ use crate::audio::player::Player;
 use crate::core::{Id, Item};
 use crate::lang::{self, tr};
 use crate::store::Library;
-use crate::sync;
+use crate::{remote, sync};
 
 pub struct App {
     window: adw::ApplicationWindow,
@@ -31,6 +31,10 @@ pub struct App {
     view_stack: adw::ViewStack,
     /// Window-wide notifications, e.g. "takes effect after a restart".
     toasts: adw::ToastOverlay,
+    /// The folder currently shared, if any.
+    share: Option<remote::Share>,
+    /// Starting a share (connecting to a relay takes a few seconds).
+    sharing: bool,
 }
 
 #[derive(Debug)]
@@ -56,6 +60,20 @@ pub enum AppMsg {
     DisableSync,
     /// 0 = the system's language, 1 = English, 2 = Russian.
     Language(u32),
+    /// Open this folder to another Sample Creator (phone) over iroh.
+    Share(PathBuf),
+    ShareReady(SharedFolder),
+    ShowShare,
+    StopShare,
+}
+
+/// A running share, or why it did not start.
+pub struct SharedFolder(Result<remote::Share, String>);
+
+impl std::fmt::Debug for SharedFolder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SharedFolder")
+    }
 }
 
 #[relm4::component(pub)]
@@ -81,6 +99,15 @@ impl SimpleComponent for App {
                         set_icon_name: "folder-open-symbolic",
                         set_tooltip_text: Some(tr("Открыть папку", "Open folder")),
                         connect_clicked => AppMsg::ChooseRoot,
+                    },
+
+                    pack_end = &gtk::Button {
+                        set_icon_name: "network-wireless-symbolic",
+                        set_tooltip_text: Some(tr("Папка открыта для телефона", "Folder shared with the phone")),
+                        add_css_class: "accent",
+                        #[watch]
+                        set_visible: model.share.is_some(),
+                        connect_clicked => AppMsg::ShowShare,
                     },
 
                     pack_end = &gtk::MenuButton {
@@ -258,6 +285,7 @@ impl SimpleComponent for App {
             .launch((root_dir.clone(), library.clone()))
             .forward(sender.input_sender(), |out| match out {
                 FileTreeOutput::FileSelected(path) => AppMsg::FileSelected(path),
+                FileTreeOutput::Share(folder) => AppMsg::Share(folder),
             });
 
         let player = match Player::new() {
@@ -294,6 +322,8 @@ impl SimpleComponent for App {
             root: root_dir,
             view_stack: adw::ViewStack::new(),
             toasts: adw::ToastOverlay::new(),
+            share: None,
+            sharing: false,
         };
         let widgets = view_output!();
         model.view_stack = widgets.view_stack.clone();
@@ -439,6 +469,51 @@ impl SimpleComponent for App {
                 self.toasts
                     .add_toast(adw::Toast::builder().title(text).timeout(4).build());
             }
+            AppMsg::Share(folder) => {
+                if self.sharing {
+                    return;
+                }
+                self.share = None;
+                self.sharing = true;
+                self.toasts.add_toast(
+                    adw::Toast::builder()
+                        .title(tr("Открываю доступ к папке…", "Sharing the folder…"))
+                        .timeout(3)
+                        .build(),
+                );
+                let (secret, token) = share_keys(&self.library, &folder);
+                let input = sender.input_sender().clone();
+                std::thread::spawn(move || {
+                    let result =
+                        remote::Share::start(folder, secret, token).map_err(|e| format!("{e:#}"));
+                    input.emit(AppMsg::ShareReady(SharedFolder(result)));
+                });
+            }
+            AppMsg::ShareReady(SharedFolder(result)) => {
+                self.sharing = false;
+                match result {
+                    Ok(share) => {
+                        self.share = Some(share);
+                        sender.input(AppMsg::ShowShare);
+                    }
+                    Err(err) => self.toasts.add_toast(adw::Toast::new(&format!(
+                        "{}: {err}",
+                        tr("Не удалось открыть доступ", "Could not share")
+                    ))),
+                }
+            }
+            AppMsg::ShowShare => {
+                if let Some(share) = &self.share {
+                    share_dialog(&self.window, share, sender.input_sender().clone());
+                }
+            }
+            AppMsg::StopShare => {
+                self.share = None;
+                self.toasts.add_toast(adw::Toast::new(tr(
+                    "Доступ к папке закрыт",
+                    "The folder is no longer shared",
+                )));
+            }
             AppMsg::DisableSync => {
                 if let Err(err) = sync::disable(&self.library, &self.root) {
                     self.sync_status = format!("{}: {err:#}", tr("Не удалось", "Failed"));
@@ -546,6 +621,133 @@ impl App {
             }
         }
     }
+}
+
+/// This computer's iroh key (so the address stays the same) and the folder's
+/// access token, made once and kept: a QR code scanned before keeps working.
+fn share_keys(library: &Library, folder: &std::path::Path) -> ([u8; 32], String) {
+    let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    let secret = library
+        .setting("share.secret")
+        .and_then(|h| {
+            let bytes: Vec<u8> = (0..h.len())
+                .step_by(2)
+                .filter_map(|i| u8::from_str_radix(h.get(i..i + 2)?, 16).ok())
+                .collect();
+            bytes.try_into().ok()
+        })
+        .unwrap_or_else(|| {
+            let key = iroh_key();
+            library.set_setting("share.secret", &hex(&key)).ok();
+            key
+        });
+    let key = format!("share.token:{}", folder.display());
+    let token = library.setting(&key).unwrap_or_else(|| {
+        let t = remote::random_token();
+        library.set_setting(&key, &t).ok();
+        t
+    });
+    (secret, token)
+}
+
+fn iroh_key() -> [u8; 32] {
+    let t = remote::random_token() + &remote::random_token();
+    let mut key = [0u8; 32];
+    for (i, b) in key.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&t[i * 2..i * 2 + 2], 16).unwrap_or(0);
+    }
+    key
+}
+
+/// The QR code and the code as text for the phone to connect with.
+fn share_dialog(
+    window: &adw::ApplicationWindow,
+    share: &remote::Share,
+    input: relm4::Sender<AppMsg>,
+) {
+    let ticket = share.ticket().to_owned();
+    let qr = gtk::DrawingArea::builder()
+        .content_width(280)
+        .content_height(280)
+        .halign(gtk::Align::Center)
+        .build();
+    if let Ok(code) = qrcode::QrCode::with_error_correction_level(&ticket, qrcode::EcLevel::L) {
+        let width = code.width();
+        let colors = code.to_colors();
+        qr.set_draw_func(move |_, cr, w, h| {
+            let quiet = 2;
+            let cells = (width + quiet * 2) as f64;
+            let size = f64::from(w.min(h));
+            let cell = size / cells;
+            cr.set_source_rgb(1.0, 1.0, 1.0);
+            cr.rectangle(0.0, 0.0, size, size);
+            cr.fill().ok();
+            cr.set_source_rgb(0.0, 0.0, 0.0);
+            for (i, c) in colors.iter().enumerate() {
+                if *c == qrcode::Color::Dark {
+                    let (x, y) = (i % width + quiet, i / width + quiet);
+                    cr.rectangle(x as f64 * cell, y as f64 * cell, cell + 0.5, cell + 0.5);
+                }
+            }
+            cr.fill().ok();
+        });
+    }
+    let folder = share
+        .folder
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let text = gtk::Entry::builder().text(&ticket).editable(false).build();
+    let copy = gtk::Button::builder()
+        .icon_name("edit-copy-symbolic")
+        .tooltip_text(tr("Скопировать код", "Copy the code"))
+        .build();
+    let t = ticket.clone();
+    copy.connect_clicked(move |b| b.clipboard().set_text(&t));
+    let row = gtk::Box::builder().spacing(6).build();
+    text.set_hexpand(true);
+    row.append(&text);
+    row.append(&copy);
+    let stop = gtk::Button::builder()
+        .label(tr("Закрыть доступ", "Stop sharing"))
+        .css_classes(["destructive-action"])
+        .halign(gtk::Align::Center)
+        .build();
+    let content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(12)
+        .margin_start(24)
+        .margin_end(24)
+        .margin_top(12)
+        .margin_bottom(24)
+        .build();
+    content.append(&qr);
+    content.append(
+        &gtk::Label::builder()
+            .label(tr(
+                "Откройте Sample Creator на телефоне: боковая панель → «Подключиться к компьютеру» и отсканируйте код. Доступ только на чтение, только к этой папке; связь зашифрована. Работает и вне домашней сети.",
+                "Open Sample Creator on the phone: side panel → Connect to a computer, and scan the code. Read-only, this folder only; the connection is encrypted. Works outside the home network too.",
+            ))
+            .wrap(true)
+            .max_width_chars(40)
+            .justify(gtk::Justification::Center)
+            .build(),
+    );
+    content.append(&row);
+    content.append(&stop);
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&adw::HeaderBar::new());
+    toolbar.set_content(Some(&content));
+    let dialog = adw::Dialog::builder()
+        .title(format!("{} «{folder}»", tr("Доступ к папке", "Sharing")))
+        .child(&toolbar)
+        .build();
+    let d = dialog.clone();
+    stop.connect_clicked(move |_| {
+        input.emit(AppMsg::StopShare);
+        d.close();
+    });
+    dialog.present(Some(window));
 }
 
 /// Position of the saved language choice in the settings drop-down.

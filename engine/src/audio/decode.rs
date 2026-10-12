@@ -3,7 +3,6 @@
 //! WAV/BWF goes through our own reader (exact frame seeks are a single file seek);
 //! compressed formats go through symphonia.
 
-use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
@@ -88,7 +87,8 @@ pub fn probe(path: &Path) -> Result<AudioInfo> {
 }
 
 pub fn open(path: &Path) -> Result<(AudioInfo, Box<dyn FrameSource>)> {
-    let mut file = File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
+    let mut file =
+        crate::vfs::open(path).with_context(|| format!("cannot open {}", path.display()))?;
 
     match bwf::read_info(&mut file) {
         Ok(wav) => {
@@ -117,7 +117,7 @@ pub fn open(path: &Path) -> Result<(AudioInfo, Box<dyn FrameSource>)> {
 }
 
 struct WavSource {
-    reader: BufReader<File>,
+    reader: BufReader<crate::vfs::VFile>,
     format: SampleFormat,
     channels: usize,
     block_align: usize,
@@ -128,7 +128,7 @@ struct WavSource {
 }
 
 impl WavSource {
-    fn new(file: File, info: bwf::WavInfo) -> Result<Self> {
+    fn new(file: crate::vfs::VFile, info: bwf::WavInfo) -> Result<Self> {
         let mut source = WavSource {
             reader: BufReader::with_capacity(1 << 20, file),
             format: info.format,
@@ -214,7 +214,7 @@ struct SymphoniaSource {
 impl SymphoniaSource {
     fn new(path: &Path) -> Result<Self> {
         let open_reader = || -> Result<Box<dyn FormatReader>> {
-            let file = File::open(path)?;
+            let file = crate::vfs::open(path)?;
             let mss = MediaSourceStream::new(Box::new(file), Default::default());
             let mut hint = Hint::new();
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {

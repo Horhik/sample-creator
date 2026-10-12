@@ -5,6 +5,7 @@ import 'processing.dart';
 import 'review.dart';
 import 'src/rust/api/review.dart' as review_api;
 import 'display.dart';
+import 'remote_ui.dart';
 import 'sync_ui.dart';
 import 'l10n.dart';
 
@@ -24,6 +25,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     applyFullscreen();
     syncAll();
+    reconnectShared();
   }
 
   @override

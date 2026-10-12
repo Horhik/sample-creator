@@ -178,7 +178,7 @@ pub fn all_regions() -> Result<Vec<ReviewRegion>> {
             sample_rate: f.sample_rate,
             file_channels: f.channels,
             total_frames: f.total_frames as i64,
-            available: f.path.exists(),
+            available: sample_creator_engine::vfs::exists(&f.path),
             start: r.start as i64,
             end: r.end as i64,
             name: r.name,
@@ -485,7 +485,7 @@ pub fn preview_processed(id: i64, from: i64) -> Result<i64> {
 /// Renders a processed region in the background so it plays without a wait.
 pub fn prerender(id: i64) -> Result<()> {
     let (file, region) = find_region(id)?;
-    if region.is_processed() && file.path.exists() {
+    if region.is_processed() && sample_creator_engine::vfs::exists(&file.path) {
         export::cache::rendered(&file.path, &region)?;
     }
     Ok(())

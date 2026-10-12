@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/engine.dart';
+import 'api/remote.dart';
 import 'api/review.dart';
 import 'api/sync.dart';
 import 'dart:async';
@@ -150,6 +151,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RegionView dco_decode_region_view(dynamic raw);
+
+  @protected
+  RemoteShare dco_decode_remote_share(dynamic raw);
 
   @protected
   ReviewRegion dco_decode_review_region(dynamic raw);
@@ -310,6 +314,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RegionView sse_decode_region_view(SseDeserializer deserializer);
+
+  @protected
+  RemoteShare sse_decode_remote_share(SseDeserializer deserializer);
 
   @protected
   ReviewRegion sse_decode_review_region(SseDeserializer deserializer);
@@ -511,6 +518,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_region_view(RegionView self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_remote_share(RemoteShare self, SseSerializer serializer);
 
   @protected
   void sse_encode_review_region(ReviewRegion self, SseSerializer serializer);

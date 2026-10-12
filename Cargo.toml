@@ -11,6 +11,7 @@ members = ["engine", "mobile/rust"]
 
 [dependencies]
 anyhow = "1.0.104"
+qrcode = { version = "0.14.1", default-features = false }
 relm4 = { version = "0.11.0", features = ["libadwaita", "gnome_48"] }
 sample-creator-engine = { path = "engine" }
 

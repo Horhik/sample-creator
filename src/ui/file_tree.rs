@@ -39,6 +39,8 @@ pub enum FileTreeInput {
     Refresh(PathBuf),
     /// Highlight the open file: expand its folders and select its row.
     Reveal(PathBuf),
+    /// From the right-click menu: this folder, or the root when `None`.
+    ShareAt(Option<PathBuf>),
 }
 
 /// Name and badge label of a bound row.
@@ -109,6 +111,8 @@ impl Badges {
 #[derive(Debug)]
 pub enum FileTreeOutput {
     FileSelected(PathBuf),
+    /// "Share this folder" from the right-click menu.
+    Share(PathBuf),
 }
 
 pub struct FileTreeWidgets {
@@ -160,6 +164,7 @@ impl SimpleComponent for FileTree {
 
         let revealing = Rc::new(std::cell::Cell::new(false));
         set_tree_root(&list_view, &root_dir, &sender, revealing.clone());
+        share_menu(&list_view, &sender);
         let widgets = FileTreeWidgets {
             list_view,
             shown_root: root_dir.clone(),
@@ -181,6 +186,10 @@ impl SimpleComponent for FileTree {
             FileTreeInput::SetRoot(dir) => self.root = dir,
             FileTreeInput::Refresh(path) => self.badges.refresh(&path),
             FileTreeInput::Reveal(path) => *self.reveal.borrow_mut() = Some(path),
+            FileTreeInput::ShareAt(folder) => {
+                let folder = folder.unwrap_or_else(|| self.root.clone());
+                _sender.output(FileTreeOutput::Share(folder)).ok();
+            }
         }
     }
 
@@ -201,6 +210,45 @@ impl SimpleComponent for FileTree {
             reveal(&widgets.list_view, path, self.revealing.clone());
         }
     }
+}
+
+/// Right click: share the folder under the pointer (or the tree's own root
+/// when clicking a file or empty space).
+fn share_menu(list_view: &gtk::ListView, sender: &ComponentSender<FileTree>) {
+    let click = gtk::GestureClick::builder().button(3).build();
+    let (view, sender) = (list_view.clone(), sender.clone());
+    click.connect_pressed(move |_, _, x, y| {
+        let folder = view
+            .pick(x, y, gtk::PickFlags::DEFAULT)
+            .and_then(|w| {
+                std::iter::successors(Some(w), |w| w.parent())
+                    .find_map(|w| w.downcast::<gtk::TreeExpander>().ok())
+            })
+            .and_then(|e| e.list_row())
+            .and_then(|row| row.item())
+            .and_downcast::<gio::FileInfo>()
+            .filter(|info| info.file_type() == gio::FileType::Directory)
+            .and_then(|info| file_of(&info))
+            .and_then(|f| f.path());
+        let button = gtk::Button::builder()
+            .label(tr("Поделиться папкой…", "Share folder…"))
+            .css_classes(["flat"])
+            .build();
+        let popover = gtk::Popover::builder().child(&button).has_arrow(true).build();
+        popover.set_parent(&view);
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        let (s, p) = (sender.clone(), popover.clone());
+        button.connect_clicked(move |_| {
+            p.popdown();
+            s.input(FileTreeInput::ShareAt(folder.clone()));
+        });
+        popover.connect_closed(|p| {
+            let p = p.clone();
+            glib::idle_add_local_once(move || p.unparent());
+        });
+        popover.popup();
+    });
+    list_view.add_controller(click);
 }
 
 /// Expands the folders on the way to `path` and selects its row. Folders

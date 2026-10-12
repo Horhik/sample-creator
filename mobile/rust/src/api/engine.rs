@@ -67,16 +67,13 @@ pub struct Entry {
 
 /// Folders and supported recordings in `path`, folders first, hidden ones skipped.
 pub fn list_dir(path: String) -> Result<Vec<Entry>> {
+    // The folder may be on another computer: read it before taking the library.
+    let items = sample_creator_engine::vfs::read_dir(Path::new(&path))
+        .with_context(|| format!("cannot read {path}"))?;
     let library = library()?;
     let mut entries = Vec::new();
-    for item in std::fs::read_dir(&path).with_context(|| format!("cannot read {path}"))? {
-        let item = item?;
-        let name = item.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
-            continue;
-        }
-        let path = item.path();
-        let is_dir = path.is_dir();
+    for item in items {
+        let (name, path, is_dir) = (item.name, item.path, item.is_dir);
         if !is_dir && !audio::is_supported(&path) {
             continue;
         }

@@ -41,9 +41,9 @@ fn key(path: &Path, r: &Region) -> u64 {
     let mut h = xxhash_rust::xxh3::Xxh3::new();
     h.write_u32(VERSION);
     h.write(path.to_string_lossy().as_bytes());
-    if let Ok(meta) = fs::metadata(path) {
-        h.write_u64(meta.len());
-        if let Ok(t) = meta.modified()
+    if let Ok(meta) = crate::vfs::metadata(path) {
+        h.write_u64(meta.len);
+        if let Some(t) = meta.modified
             && let Ok(d) = t.duration_since(std::time::UNIX_EPOCH)
         {
             h.write_u64(d.as_secs());

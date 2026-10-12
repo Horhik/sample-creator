@@ -41,6 +41,9 @@ Desktop and phone screenshots are in [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md).
   reduction. Results are cached, so previews start at once.
 - **Markup file on the volume** (optional): `sample-creator.json` on the
   recorder's card carries the markup between the phone and the computer.
+- **Folder sharing.** Share a folder from the desktop, scan the QR code, and
+  browse and mark up its recordings on the phone, at home or over the
+  internet (iroh, encrypted, read-only, no server of your own).
 - **Desktop:** keyboard first (`?` lists every key), right-click menu.
 - **Phone:** gestures, landscape layout, Material You colours, recorders over
   USB OTG.

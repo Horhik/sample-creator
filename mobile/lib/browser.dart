@@ -7,6 +7,8 @@ import 'src/rust/api/engine.dart' as engine;
 import 'src/rust/api/review.dart' as review_api;
 import 'src/rust/api/sync.dart' as sync;
 import 'display.dart';
+import 'remote_ui.dart';
+import 'src/rust/api/remote.dart' as remote_api;
 import 'sync_ui.dart';
 import 'l10n.dart';
 import 'waveform.dart' show friendlyError;
@@ -117,21 +119,30 @@ class FileBrowserState extends State<FileBrowser> {
     super.initState();
     _loadVolumes();
     volumesChanged.addListener(_onVolumesChanged);
+    sharedFolders.addListener(_onShared);
     final saved = review_api.getSetting(key: widget.settingsKey);
     final start =
         saved ??
         (widget.current == null
             ? null
             : Directory(widget.current!).parent.path);
-    if (start != null && Directory(start).existsSync()) {
-      open(start);
+    if (start != null) {
+      // May be a folder on a computer that is not connected yet.
+      remote_api.pathExists(path: start).then((ok) {
+        if (ok && mounted && _dir == null) open(start);
+      });
     }
   }
 
   @override
   void dispose() {
     volumesChanged.removeListener(_onVolumesChanged);
+    sharedFolders.removeListener(_onShared);
     super.dispose();
+  }
+
+  void _onShared() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadVolumes() async {
@@ -145,10 +156,64 @@ class FileBrowserState extends State<FileBrowser> {
     _loadVolumes();
     syncAll();
     final dir = _dir;
-    if (dir != null && !Directory(dir).existsSync()) open(null);
+    if (dir != null) {
+      remote_api.pathExists(path: dir).then((ok) {
+        if (!ok && mounted && _dir == dir) open(null);
+      });
+    }
   }
 
-  bool _isRoot(String dir) => _volumes.any((v) => v.path == dir);
+  bool _isRoot(String dir) =>
+      _volumes.any((v) => v.path == dir) ||
+      sharedFolders.value.any((f) => f.root == dir);
+
+  Future<void> _openShared(SharedFolder f) async {
+    var root = f.root;
+    if (root == null) {
+      try {
+        root = (await connectShared(f.ticket)).root;
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        }
+        return;
+      }
+    }
+    if (root != null) open(root);
+  }
+
+  void _sharedMenu(SharedFolder f) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.computer),
+              title: Text(f.name),
+              subtitle: Text(
+                f.root == null
+                    ? tr('Не подключено', 'Not connected')
+                    : tr('Подключено', 'Connected'),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.link_off),
+              title: Text(tr('Забыть этот компьютер', 'Forget this computer')),
+              onTap: () {
+                Navigator.pop(context);
+                forgetShared(f);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Future<void> _volumeMenu(Volume v) async {
     await showVolumeSheet(context, v);
@@ -226,6 +291,27 @@ class FileBrowserState extends State<FileBrowser> {
   Widget _roots() {
     return ListView(
       children: [
+        for (final f in sharedFolders.value)
+          ListTile(
+            leading: Icon(
+              Icons.computer,
+              color: f.root == null
+                  ? Theme.of(context).disabledColor
+                  : Theme.of(context).colorScheme.primary,
+            ),
+            title: Text(f.name),
+            subtitle: Text(
+              f.root == null
+                  ? tr('Компьютер · не подключено', 'Computer · not connected')
+                  : tr('Компьютер', 'Computer'),
+            ),
+            onTap: () => _openShared(f),
+            onLongPress: () => _sharedMenu(f),
+            trailing: IconButton(
+              icon: const Icon(Icons.more_vert),
+              onPressed: () => _sharedMenu(f),
+            ),
+          ),
         for (final v in _volumes)
           ListTile(
             leading: Icon(v.removable ? Icons.usb : Icons.smartphone),
@@ -264,6 +350,25 @@ class FileBrowserState extends State<FileBrowser> {
             style: TextStyle(fontSize: 12),
           ),
         ),
+        if (widget.onFile != null)
+          ListTile(
+            leading: const Icon(Icons.add_link),
+            title: Text(
+              tr('Подключиться к компьютеру', 'Connect to a computer'),
+            ),
+            subtitle: Text(
+              tr(
+                'Папка, открытая в Sample Creator на компьютере',
+                'A folder shared by Sample Creator on a computer',
+              ),
+            ),
+            onTap: () async {
+              final folder = await Navigator.of(context).push<SharedFolder>(
+                MaterialPageRoute(builder: (_) => const ConnectPage()),
+              );
+              if (folder?.root != null) open(folder!.root);
+            },
+          ),
         if (widget.showSettings) ...[
           const Divider(),
           ValueListenableBuilder(

@@ -2,6 +2,16 @@
 
 <p><b>English</b> | <a href="CHANGELOG.ru.md">Русский</a></p>
 
+## Unreleased
+
+- Folder sharing: right-click a folder in the desktop tree → Share folder…,
+  scan the QR code on the phone, and its recordings open on the phone as if
+  they were local: markup, review, processing and export work as usual. It
+  works on the home network and over the internet (iroh: a direct connection
+  where possible, otherwise through public relays; encrypted end to end). The
+  code is the password, and access is read-only. The phone remembers shared
+  folders and reconnects when the computer shares the folder again.
+
 ## 0.2.0
 
 - English and Russian interface. The system language by default; pick one in

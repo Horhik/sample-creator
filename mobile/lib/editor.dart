@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -7,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import 'item_sheet.dart';
 import 'browser.dart';
+import 'src/rust/api/remote.dart' as remote_api;
 import 'src/rust/api/engine.dart' as engine;
 import 'src/rust/api/review.dart' as review;
 import 'sync_ui.dart';
@@ -138,7 +138,7 @@ class _EditorPageState extends State<EditorPage>
       _fitted = false;
       _playhead = 0;
     });
-    if (!File(path).existsSync()) {
+    if (!await remote_api.pathExists(path: path)) {
       // Opens by itself once the volume comes back (see _onVolumes).
       setState(() => _missing = true);
       return;
@@ -162,8 +162,11 @@ class _EditorPageState extends State<EditorPage>
   }
 
   void _onVolumes() {
-    if (_missing && widget.path != null && File(widget.path!).existsSync()) {
-      _load();
+    final path = widget.path;
+    if (_missing && path != null) {
+      remote_api.pathExists(path: path).then((ok) {
+        if (ok && mounted && _missing && widget.path == path) _load();
+      });
     }
   }
 
