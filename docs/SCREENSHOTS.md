@@ -1,25 +1,27 @@
-# Скриншоты
+# Screenshots
 
-## Десктоп
+The screenshots show the Russian interface; English ones will follow.
 
-Разметка:
+## Desktop
 
-![Разметка](screenshots/desktop-editor.jpg)
+Markup:
 
-Обзор регионов:
+![Markup](screenshots/desktop-editor.jpg)
 
-![Обзор регионов](screenshots/desktop-review.jpg)
+Region review:
 
-Обработка: скорость и лента нарезки:
+![Region review](screenshots/desktop-review.jpg)
 
-![Обработка](screenshots/desktop-processing.jpg)
+Processing: speed and the cutting timeline:
 
-## Телефон
+![Processing](screenshots/desktop-processing.jpg)
 
-| Разметка | Обзор регионов | Обработка | Подробная нарезка |
+## Phone
+
+| Markup | Region review | Processing | Full-screen cutting |
 |---|---|---|---|
 | ![](screenshots/editor.png) | ![](screenshots/review.png) | ![](screenshots/processing.png) | ![](screenshots/parts.png) |
 
-Горизонтальный режим:
+Landscape:
 
-![Горизонтальный режим](screenshots/landscape.png)
+![Landscape](screenshots/landscape.png)

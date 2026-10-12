@@ -1,30 +1,30 @@
-# Изменения
+# Changes
+
+<p><b>English</b> | <a href="CHANGELOG.ru.md">Русский</a></p>
 
 ## 0.2.0
 
-- Интерфейс на русском и английском. По умолчанию — язык системы; выбрать
-  можно в настройках (десктоп: меню ☰, после перезапуска; телефон: боковая
-  панель, сразу).
-- Телефон: «Обработка» в горизонтальном положении — список регионов узкой
-  панелью сбоку, настройки на остальной части экрана.
-- Телефон: вибрация в начале выделения, при захвате маркера или края региона
-  и когда маркер отпущен.
-- Громкость и динамика региона: громкость, нормализация, обрезка тишины,
-  компрессор, шумоподавление (RNNoise). Громкость можно поднять прямо в
-  разметке — регион сразу слышно громче.
-- Обработанный звук кэшируется: прослушивание без повторного расчёта, в том
-  числе после перезапуска; результат готовится заранее, когда уходишь из
-  «Обработки».
-- Обзор регионов: обработанный регион показывает и играет результат, кнопка
-  ▶ больше не сбрасывается во время расчёта и останавливает звук, на телефоне
-  по мини-волне идёт полоска воспроизведения; кнопка «Удалить» для отмеченных
-  регионов с подтверждением.
-- «Обработка»: «Оригинал» и «Результат» закреплены вверху.
-- Десктоп: открытый файл подсвечивается в дереве.
-- Описание проекта без привязки к модели рекордера.
+- English and Russian interface. The system language by default; pick one in
+  the settings (desktop: the ☰ menu, after a restart; phone: the side panel,
+  at once).
+- Region volume and dynamics: gain, normalising, trimming silence, a
+  compressor and speech noise reduction (RNNoise). Gain can be raised right in
+  markup, and the region is heard louder at once.
+- Processed audio is cached: previews without recomputing, also after a
+  restart; the result is rendered ahead when you leave the processing page.
+- Region review: a processed region shows and plays its result, the play
+  button no longer flips back while rendering and can stop playback, a line
+  follows playback on the phone, and the ticked regions can be deleted after a
+  confirmation.
+- Processing: Original and Result are pinned at the top.
+- Phone: processing in landscape keeps the region list in a narrow side
+  column; haptics when a selection starts and when a marker or an edge is
+  caught and released.
+- Desktop: the open file is highlighted in the tree.
+- The project is described without tying it to one recorder model.
 
 ## 0.1.0
 
-Первая версия: разметка записей, обзор регионов и экспорт, обработка
-(скорость, нарезка с наложением и фейдами), файл разметки на носителе;
-десктоп на GTK4 и приложение для Android.
+First release: marking up recordings, region review and export, processing
+(speed, cutting with overlaps and fades), the markup file on the volume; the
+GTK4 desktop app and the Android app.

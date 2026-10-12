@@ -5,65 +5,68 @@
 <h1 align="center">Sample Creator</h1>
 
 <p align="center">
-  Разметка аудиозаписей и нарезка из них сэмплов.<br>
-  Linux (GTK4 / libadwaita) и Android.
+  Mark up audio recordings and cut them into samples.<br>
+  Linux (GTK4 / libadwaita) and Android.
 </p>
 
-<p align="center"><i>Mark up audio recordings and cut them into samples. Linux and Android. English and Russian UI.</i></p>
+<p align="center"><b>English</b> | <a href="README.ru.md">Русский</a></p>
 
 ---
 
-Слушаешь запись, ставишь маркеры, выделяешь регионы, называешь их. Файлы
-не появляются сразу: регионы остаются черновиками, пока ты не нажмёшь
-«Экспортировать» и не выберешь папку. Исходные записи никогда не меняются,
-и рядом с ними ничего не пишется — удобно, когда они лежат прямо на карте
-рекордера.
+Listen to a recording, drop markers, select regions and name them. No files
+appear yet: regions stay drafts until you press Export and pick a folder.
+The recordings themselves are never changed and nothing is written next to
+them — handy when they sit right on a recorder's card.
 
-Для разбора большого количества аудиофайлов: WAV/BWF (16/24/32 int, 32 float),
-MP3 и FLAC. Записи на несколько часов — норма: всё читается потоково.
+Made for going through lots of audio files: WAV/BWF (16/24/32-bit int,
+32-bit float), MP3 and FLAC. Recordings several hours long are fine: they are
+read as a stream.
 
-Скриншоты десктопа и телефона — в [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md).
+Desktop and phone screenshots are in [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md).
 
-## Возможности
+## Features
 
-- **Разметка.** Волна по каналам, маркеры и регионы с именами и 8 цветами,
-  undo/redo, автосохранение. Метки рекордера (`cue`) подхватываются сами,
-  время начала берётся из `bext`.
-- **Обзор регионов.** Все регионы всех записей с мини-волнами, прослушивание,
-  фильтры по цвету, переход к месту в записи.
-- **Экспорт** только по команде: шаблон имени, формат (как в исходнике, 24 бит,
-  32 float), стерео целиком, один канал или L/R в отдельные файлы. В файл
-  пишется `bext` со ссылкой на исходник.
-- **Обработка региона.** Скорость ×0,25…×4 — как пластинка или с сохранением
-  тона. Нарезка на части, перестановка, наложение частей и фейды, плавные
-  переходы — на ленте результата.
-- **Файл разметки на носителе** (по желанию): `sample-creator.json` на карте
-  рекордера, чтобы разметка ездила между телефоном и компьютером.
-- **Десктоп:** работа с клавиатуры (`?` — все клавиши), меню по правой кнопке.
-- **Телефон:** жесты, горизонтальный режим, тема и цвета Material You,
-  рекордер по USB OTG.
-- **Русский и английский** интерфейс: по умолчанию как в системе, можно
-  выбрать в настройках.
+- **Markup.** Waveform per channel, markers and regions with names and eight
+  colours, undo/redo, autosave. Recorder marks (`cue`) are picked up, the start
+  time comes from `bext`. A region can be made louder right here.
+- **Region review.** Every region of every recording with a mini waveform,
+  preview (processed regions play their result), colour filters, a jump back
+  to the recording, deleting the ticked ones.
+- **Export** only on request: name template, format (as the source, 24-bit,
+  32-bit float), stereo as is, one channel or L/R as separate files. Each file
+  gets `bext` pointing back at its source.
+- **Region processing.** Speed ×0.25…×4, like a record or keeping the pitch;
+  cutting into parts, reordering, overlapping and fading them on the result
+  timeline; gain, normalising, trimming silence, a compressor and speech noise
+  reduction. Results are cached, so previews start at once.
+- **Markup file on the volume** (optional): `sample-creator.json` on the
+  recorder's card carries the markup between the phone and the computer.
+- **Desktop:** keyboard first (`?` lists every key), right-click menu.
+- **Phone:** gestures, landscape layout, Material You colours, recorders over
+  USB OTG.
+- **English and Russian** interface: the system language by default, or pick
+  one in the settings.
 
-## Установка
+## Install
 
-**Android 8+** — APK в [релизах](../../releases) (arm64).
+**Android 8+** — the APK from the [releases](../../releases) (arm64).
 
-**Linux с Nix:**
+**Linux with Nix:**
 
 ```sh
 nix run github:Horhik/sample-creator
 ```
 
-Без Nix, а также сборка Android-версии — в [docs/BUILDING.md](docs/BUILDING.md).
+Without Nix, and building the Android app: [docs/BUILDING.md](docs/BUILDING.md).
 
-## Как устроено
+## How it is built
 
-Rust: общий крейт [`engine`](engine) (чтение WAV/BWF/MP3/FLAC, волна, плеер на
-cpal, SQLite, экспорт, обработка), десктоп на relm4 + libadwaita, телефон на
-Flutter через flutter_rust_bridge ([`mobile`](mobile)). Подробный план и
-решения — в [AGENTS.md](AGENTS.md).
+Rust: a shared [`engine`](engine) crate (WAV/BWF/MP3/FLAC reading, waveform,
+playback on cpal, SQLite, export, processing), the desktop app on relm4 +
+libadwaita, the phone app on Flutter through flutter_rust_bridge
+([`mobile`](mobile)). The detailed plan and decisions are in
+[AGENTS.md](AGENTS.md) (in Russian). Changes: [CHANGELOG.md](CHANGELOG.md).
 
-## Лицензия
+## License
 
 [MIT](LICENSE)

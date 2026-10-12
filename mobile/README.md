@@ -1,6 +1,7 @@
-# Sample Creator для Android
+# Sample Creator for Android
 
-Flutter-интерфейс поверх общего Rust-движка (`../engine`), мост —
-[flutter_rust_bridge](https://github.com/fzyzcjy/flutter_rust_bridge) в `rust/`.
+The Flutter interface on top of the shared Rust engine (`../engine`); the
+bridge is [flutter_rust_bridge](https://github.com/fzyzcjy/flutter_rust_bridge)
+in `rust/`.
 
-Сборка — в [../docs/BUILDING.md](../docs/BUILDING.md#android).
+Building: [../docs/BUILDING.md](../docs/BUILDING.md#android).
