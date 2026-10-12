@@ -36,7 +36,7 @@ pub enum VFile {
 
 pub fn open(path: &Path) -> io::Result<VFile> {
     match split_remote(path) {
-        Some((id, inner)) => Ok(VFile::Remote(remote::open(id, &inner)?)),
+        Some((id, inner)) => remote::open(id, &inner),
         None => Ok(VFile::Local(std::fs::File::open(path)?)),
     }
 }
@@ -49,7 +49,7 @@ pub struct Meta {
 
 pub fn metadata(path: &Path) -> io::Result<Meta> {
     match split_remote(path) {
-        Some((id, inner)) => remote::stat(id, &inner),
+        Some((id, inner)) => remote::metadata(id, &inner),
         None => {
             let m = std::fs::metadata(path)?;
             Ok(Meta {

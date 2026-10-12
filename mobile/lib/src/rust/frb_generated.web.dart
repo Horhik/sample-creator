@@ -27,6 +27,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException dco_decode_AnyhowException(dynamic raw);
 
   @protected
+  RustStreamSink<DownloadProgress> dco_decode_StreamSink_download_progress_Sse(
+    dynamic raw,
+  );
+
+  @protected
   RustStreamSink<ExportProgress> dco_decode_StreamSink_export_progress_Sse(
     dynamic raw,
   );
@@ -54,6 +59,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Channels dco_decode_channels(dynamic raw);
+
+  @protected
+  DownloadProgress dco_decode_download_progress(dynamic raw);
 
   @protected
   Entry dco_decode_entry(dynamic raw);
@@ -182,6 +190,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
+  RustStreamSink<DownloadProgress> sse_decode_StreamSink_download_progress_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   RustStreamSink<ExportProgress> sse_decode_StreamSink_export_progress_Sse(
     SseDeserializer deserializer,
   );
@@ -209,6 +222,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Channels sse_decode_channels(SseDeserializer deserializer);
+
+  @protected
+  DownloadProgress sse_decode_download_progress(SseDeserializer deserializer);
 
   @protected
   Entry sse_decode_entry(SseDeserializer deserializer);
@@ -348,6 +364,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_StreamSink_download_progress_Sse(
+    RustStreamSink<DownloadProgress> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_StreamSink_export_progress_Sse(
     RustStreamSink<ExportProgress> self,
     SseSerializer serializer,
@@ -385,6 +407,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_channels(Channels self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_download_progress(
+    DownloadProgress self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_entry(Entry self, SseSerializer serializer);

@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::lang::tr;
 use crate::store::Library;
-use crate::vfs::{Meta, REMOTE_ROOT};
+use crate::vfs::{Meta, REMOTE_ROOT, VFile};
 
 const ALPN: &[u8] = b"sample-creator/share/1";
 const TICKET_PREFIX: &str = "sc1";
@@ -415,7 +415,6 @@ impl Client {
         Ok(c)
     }
 
-    /// One request; reconnects once if the connection dropped.
     fn request(&self, op: &Op) -> Result<(Reply, Vec<u8>)> {
         let req = serde_json::to_vec(&Request {
             token: self.token.clone(),
@@ -429,19 +428,22 @@ impl Client {
                 },
             },
         })?;
-        runtime().block_on(async {
-            let mut last = None;
-            for _ in 0..2 {
-                match self.round_trip(&req).await {
-                    Ok(r) => return Ok(r),
-                    Err(e) => {
-                        *self.conn.lock().unwrap() = None;
-                        last = Some(e);
-                    }
+        runtime().block_on(self.send(&req))
+    }
+
+    /// Sends a serialised request; reconnects once if the connection dropped.
+    async fn send(&self, req: &[u8]) -> Result<(Reply, Vec<u8>)> {
+        let mut last = None;
+        for _ in 0..2 {
+            match self.round_trip(req).await {
+                Ok(r) => return Ok(r),
+                Err(e) => {
+                    *self.conn.lock().unwrap() = None;
+                    last = Some(e);
                 }
             }
-            Err(last.unwrap_or_else(|| anyhow!("request failed")))
-        })
+        }
+        Err(last.unwrap_or_else(|| anyhow!("request failed")))
     }
 
     async fn round_trip(&self, req: &[u8]) -> Result<(Reply, Vec<u8>)> {
@@ -492,19 +494,259 @@ pub fn stat(id: &str, inner: &str) -> io::Result<Meta> {
     })
 }
 
-pub fn open(id: &str, inner: &str) -> io::Result<RemoteFile> {
-    let c = client(id)?;
-    let meta = stat(id, inner)?;
+/// Opens a remote file: its downloaded copy if there is one for this version
+/// (or any copy while the computer is away), else reads it over the network.
+pub fn open(id: &str, inner: &str) -> io::Result<VFile> {
+    if let Some(copy) = known_copy(id, inner) {
+        return Ok(VFile::Local(std::fs::File::open(copy)?));
+    }
+    let meta = match stat(id, inner) {
+        Ok(meta) => meta,
+        Err(e) => {
+            return match offline_copy(id, inner) {
+                Some((copy, _)) => Ok(VFile::Local(std::fs::File::open(copy)?)),
+                None => Err(e),
+            };
+        }
+    };
     if meta.is_dir {
         return Err(io::Error::new(io::ErrorKind::IsADirectory, inner.to_owned()));
     }
-    Ok(RemoteFile {
-        client: c,
+    if let Some(copy) = matching_copy(id, inner, &meta) {
+        return Ok(VFile::Local(std::fs::File::open(copy)?));
+    }
+    Ok(VFile::Remote(RemoteFile {
+        client: client(id)?,
         path: inner.to_owned(),
         len: meta.len,
         pos: 0,
         blocks: Arc::new(Mutex::new(VecDeque::new())),
+    }))
+}
+
+/// Size and time of a remote file, or of its copy while the computer is away.
+pub fn metadata(id: &str, inner: &str) -> io::Result<Meta> {
+    stat(id, inner).or_else(|e| offline_copy(id, inner).map(|(_, meta)| meta).ok_or(e))
+}
+
+// ---- Local copies ----
+//
+// A remote recording is downloaded whole into the app's cache before it is
+// opened: decoding, the waveform and playback then read from local storage,
+// and the file still opens while the computer is away.
+
+/// Room for copies; the least recently used go first.
+const COPIES_MAX: u64 = 4 * 1024 * 1024 * 1024;
+/// Bytes per request while downloading, and requests in flight.
+const CHUNK: u64 = 2 * 1024 * 1024;
+const IN_FLIGHT: usize = 4;
+
+/// Copies checked or fetched in this session: "id/inner" → file.
+static COPIES: Mutex<Option<HashMap<String, PathBuf>>> = Mutex::new(None);
+
+fn copies_dir() -> Result<PathBuf> {
+    Ok(crate::audio::cache_dir().context("no cache folder")?.join("remote"))
+}
+
+/// Copies of one remote file share this prefix; the rest of the name is the
+/// file's size and modification time, so a changed file is fetched again.
+fn copy_prefix(id: &str, inner: &str) -> String {
+    format!("{:016x}_", xxhash_rust::xxh3::xxh3_64(format!("{id}/{inner}").as_bytes()))
+}
+
+fn copy_name(id: &str, inner: &str, meta: &Meta) -> String {
+    let mtime = meta
+        .modified
+        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs());
+    format!("{}{}_{mtime}", copy_prefix(id, inner), meta.len)
+}
+
+fn remember(id: &str, inner: &str, copy: &Path) {
+    COPIES
+        .lock()
+        .unwrap()
+        .get_or_insert_with(HashMap::new)
+        .insert(format!("{id}/{inner}"), copy.to_owned());
+}
+
+fn known_copy(id: &str, inner: &str) -> Option<PathBuf> {
+    COPIES
+        .lock()
+        .unwrap()
+        .as_ref()?
+        .get(&format!("{id}/{inner}"))
+        .filter(|p| p.is_file())
+        .cloned()
+}
+
+/// The copy of exactly this version of the file, if it was downloaded.
+fn matching_copy(id: &str, inner: &str, meta: &Meta) -> Option<PathBuf> {
+    let copy = copies_dir().ok()?.join(copy_name(id, inner, meta));
+    copy.is_file().then(|| {
+        touch(&copy);
+        remember(id, inner, &copy);
+        copy
     })
+}
+
+/// The newest copy of a file whose computer is away, with the size and time
+/// the file had on it.
+fn offline_copy(id: &str, inner: &str) -> Option<(PathBuf, Meta)> {
+    let prefix = copy_prefix(id, inner);
+    std::fs::read_dir(copies_dir().ok()?)
+        .ok()?
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let (len, mtime) = name.strip_prefix(&prefix)?.split_once('_')?;
+            let meta = Meta {
+                len: len.parse().ok()?,
+                modified: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(mtime.parse().ok()?)),
+                is_dir: false,
+            };
+            Some((e.path(), meta))
+        })
+        .max_by_key(|(_, meta)| meta.modified)
+}
+
+/// Marks a copy as just used, so it is the last to be evicted.
+fn touch(path: &Path) {
+    if let Ok(f) = std::fs::File::options().write(true).open(path) {
+        let _ = f.set_modified(SystemTime::now());
+    }
+}
+
+/// Whether a remote file is downloaded and can open without the network.
+pub fn has_copy(path: &Path) -> bool {
+    let Some((id, inner)) = crate::vfs::split_remote(path) else {
+        return false;
+    };
+    known_copy(id, &inner).is_some()
+        || match stat(id, &inner) {
+            Ok(meta) => matching_copy(id, &inner, &meta).is_some(),
+            Err(_) => offline_copy(id, &inner).is_some(),
+        }
+}
+
+/// Downloads a remote file whole into the cache, reporting (bytes done,
+/// total). Does nothing if this version is there already.
+pub fn download(
+    path: &Path,
+    progress: &mut dyn FnMut(u64, u64),
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<()> {
+    let (id, inner) = crate::vfs::split_remote(path).context("not a shared file")?;
+    let c = client(id)?;
+    let meta = stat(id, &inner)?;
+    if meta.is_dir {
+        bail!("{} {}", inner, tr("— это папка", "is a folder"));
+    }
+    if let Some(copy) = matching_copy(id, &inner, &meta) {
+        remember(id, &inner, &copy);
+        progress(meta.len, meta.len);
+        return Ok(());
+    }
+    let dir = copies_dir()?;
+    std::fs::create_dir_all(&dir)?;
+    let name = copy_name(id, &inner, &meta);
+    let target = dir.join(&name);
+    let part = dir.join(format!("{name}.part"));
+    let fetched = fetch(&c, &inner, meta.len, &part, progress, cancel);
+    if let Err(e) = fetched {
+        let _ = std::fs::remove_file(&part);
+        return Err(e);
+    }
+    std::fs::rename(&part, &target)?;
+    prune(&dir, &copy_prefix(id, &inner), &target);
+    remember(id, &inner, &target);
+    Ok(())
+}
+
+/// Several requests in flight, written in order.
+fn fetch(
+    c: &Arc<Client>,
+    inner: &str,
+    len: u64,
+    part: &Path,
+    progress: &mut dyn FnMut(u64, u64),
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::Ordering;
+
+    let mut out = io::BufWriter::new(std::fs::File::create(part)?);
+    progress(0, len);
+    runtime().block_on(async {
+        let mut pending = VecDeque::new();
+        let (mut next, mut done) = (0u64, 0u64);
+        while done < len {
+            while pending.len() < IN_FLIGHT && next < len {
+                let want = (len - next).min(CHUNK);
+                let req = serde_json::to_vec(&Request {
+                    token: c.token.clone(),
+                    op: Op::Read {
+                        path: inner.to_owned(),
+                        offset: next,
+                        len: want as u32,
+                    },
+                })?;
+                let c = c.clone();
+                pending.push_back((
+                    want,
+                    tokio::spawn(async move { c.send(&req).await.map(|(_, bytes)| bytes) }),
+                ));
+                next += want;
+            }
+            let (want, task) = pending.pop_front().context("download stalled")?;
+            let bytes = task.await??;
+            if cancel.load(Ordering::Relaxed) {
+                pending.iter().for_each(|(_, t)| t.abort());
+                bail!("{}", tr("загрузка отменена", "download cancelled"));
+            }
+            if bytes.len() as u64 != want {
+                pending.iter().for_each(|(_, t)| t.abort());
+                bail!("{}", tr("файл на компьютере изменился", "the file changed on the computer"));
+            }
+            out.write_all(&bytes)?;
+            done += want;
+            progress(done, len);
+        }
+        Ok::<_, anyhow::Error>(())
+    })?;
+    out.flush()?;
+    Ok(())
+}
+
+/// Drops older versions of the file just fetched and, past [`COPIES_MAX`],
+/// the least recently used copies.
+fn prune(dir: &Path, prefix: &str, keep: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut copies = Vec::new();
+    for e in entries.flatten() {
+        let path = e.path();
+        if path == keep {
+            continue;
+        }
+        if e.file_name().to_string_lossy().starts_with(prefix) {
+            let _ = std::fs::remove_file(&path);
+        } else if let Ok(m) = e.metadata() {
+            copies.push((m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len(), path));
+        }
+    }
+    let mut total: u64 = copies.iter().map(|c| c.1).sum::<u64>()
+        + std::fs::metadata(keep).map_or(0, |m| m.len());
+    copies.sort();
+    for (_, len, path) in copies {
+        if total <= COPIES_MAX {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            total -= len;
+        }
+    }
 }
 
 /// Recently read blocks, newest first: (block index, bytes).
@@ -624,7 +866,9 @@ mod loopback {
     fn reads_a_recording_through_a_share() {
         let dir = std::env::temp_dir().join(format!("sc-loop-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("MUSIC")).unwrap();
-        let frames: Vec<[f32; 2]> = (0..48_000).map(|i| [i as f32 / 65_536.0, 0.0]).collect();
+        crate::audio::set_cache_dir(dir.join("cache"));
+        // Over 2 MB: downloaded in more than one request.
+        let frames: Vec<[f32; 2]> = (0..300_000).map(|i| [i as f32 / 65_536.0, 0.0]).collect();
         std::fs::write(dir.join("MUSIC/take.wav"), recorder_like(&frames)).unwrap();
 
         let share = Share::start(dir.clone(), SecretKey::generate().to_bytes(), random_token()).unwrap();
@@ -637,16 +881,35 @@ mod loopback {
 
         let path = mounted.root.join("MUSIC/take.wav");
         let (info, mut src) = decode::open(&path).unwrap();
-        assert_eq!(info.total_frames, 48_000);
+        assert_eq!(info.total_frames, 300_000);
         src.seek(40_000).unwrap();
         let mut out = Vec::new();
         src.read(&mut out, 10).unwrap();
         assert!((out[0] - 40_000.0 / 65_536.0).abs() < 1e-6);
 
+        // Downloaded whole, it then opens from the cache, even offline.
+        assert!(!has_copy(&path));
+        let len = crate::vfs::metadata(&path).unwrap().len;
+        let (mut seen, mut calls) = (0, 0);
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        download(&path, &mut |done, _| (seen, calls) = (done, calls + 1), &cancel).unwrap();
+        assert_eq!(seen, len);
+        assert!(calls > 2);
+        assert!(has_copy(&path));
+        assert!(matches!(crate::vfs::open(&path).unwrap(), VFile::Local(_)));
+        let mut src = decode::open(&path).unwrap().1;
+        src.seek(250_000).unwrap();
+        let mut out = Vec::new();
+        src.read(&mut out, 10).unwrap();
+        assert!((out[0] - 250_000.0 / 65_536.0).abs() < 1e-6);
+
         // A wrong token is refused.
         let bad = share.ticket().replacen('.', ".00", 1);
         assert!(connect(&bad).is_err());
         disconnect(&mounted.root);
+        COPIES.lock().unwrap().take();
+        assert_eq!(crate::vfs::metadata(&path).unwrap().len, len);
+        assert_eq!(decode::open(&path).unwrap().0.total_frames, 300_000);
         std::fs::remove_dir_all(dir).ok();
     }
 }

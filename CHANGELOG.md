@@ -11,6 +11,9 @@
   where possible, otherwise through public relays; encrypted end to end). The
   code is the password, and access is read-only. The phone remembers shared
   folders and reconnects when the computer shares the folder again.
+  A recording from a computer is downloaded whole before it opens (progress,
+  speed, time left, cancel); the copy stays in the app cache, so it opens at
+  once next time and also while the computer is away.
 - The phone APK is smaller (20 MB instead of 29): native libraries are
   compressed inside it.
 

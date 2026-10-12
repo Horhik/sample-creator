@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -204,6 +206,138 @@ class _ConnectPageState extends State<ConnectPage> {
                 style: TextStyle(color: theme.colorScheme.error),
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A file on a computer is downloaded whole before it opens: the waveform and
+/// playback then read from the phone. True when it can be opened.
+Future<bool> ensureLocal(BuildContext context, String path) async {
+  if (!remote_api.isRemotePath(path: path)) return true;
+  if (await remote_api.hasLocalCopy(path: path)) return true;
+  if (!context.mounted) return false;
+  final ok = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => _DownloadDialog(path),
+  );
+  return ok ?? false;
+}
+
+class _DownloadDialog extends StatefulWidget {
+  final String path;
+  const _DownloadDialog(this.path);
+
+  @override
+  State<_DownloadDialog> createState() => _DownloadDialogState();
+}
+
+class _DownloadDialogState extends State<_DownloadDialog> {
+  late final StreamSubscription<remote_api.DownloadProgress> _sub;
+  final _started = DateTime.now();
+  int _done = 0;
+  int _total = 0;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _sub = remote_api.downloadRemote(path: widget.path).listen((p) {
+      if (!mounted) return;
+      if (p.ready) {
+        Navigator.pop(context, true);
+      } else if (p.error != null) {
+        setState(() => _error = p.error);
+      } else {
+        setState(() {
+          _done = p.done;
+          _total = p.total;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _sub.cancel();
+    super.dispose();
+  }
+
+  void _cancel() {
+    if (_error == null) remote_api.cancelDownload();
+    Navigator.pop(context, false);
+  }
+
+  static String _mb(int bytes) => (bytes / 1048576).toStringAsFixed(1);
+
+  static String _left(int s) {
+    final time = s < 60
+        ? '$s $sec'
+        : '${s ~/ 60} ${tr('мин', 'min')} ${s % 60} $sec';
+    return tr('ещё $time', '$time left');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final seconds = DateTime.now().difference(_started).inMilliseconds / 1000;
+    final speed = seconds > 1 ? _done / seconds : 0.0;
+    final left = speed > 0 ? ((_total - _done) / speed).round() : null;
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _cancel();
+      },
+      child: AlertDialog(
+        title: Text(
+          tr('Загрузка с компьютера', 'Downloading from the computer'),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.path.split('/').last,
+              style: theme.textTheme.titleSmall,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 16),
+            if (_error == null) ...[
+              LinearProgressIndicator(
+                value: _total > 0 ? _done / _total : null,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _total > 0
+                    ? '${_mb(_done)} / ${_mb(_total)} ${tr('МБ', 'MB')}'
+                          '${speed > 0 ? ' · ${_mb(speed.round())} ${tr('МБ/с', 'MB/s')}' : ''}'
+                          '${left != null && left > 0 ? ' · ${_left(left)}' : ''}'
+                    : tr('Соединяюсь…', 'Connecting…'),
+                style: theme.textTheme.bodySmall,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                tr(
+                  'Файл откроется, когда загрузится целиком. Копия хранится '
+                      'в кэше приложения и открывается даже без компьютера.',
+                  'The file opens once it is downloaded whole. The copy stays '
+                      'in the app cache and opens even without the computer.',
+                ),
+                style: theme.textTheme.bodySmall,
+              ),
+            ] else
+              Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: _cancel,
+            child: Text(
+              _error == null ? tr('Отмена', 'Cancel') : tr('Закрыть', 'Close'),
+            ),
+          ),
         ],
       ),
     );

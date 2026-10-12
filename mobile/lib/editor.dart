@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import 'item_sheet.dart';
 import 'browser.dart';
+import 'remote_ui.dart';
 import 'src/rust/api/remote.dart' as remote_api;
 import 'src/rust/api/engine.dart' as engine;
 import 'src/rust/api/review.dart' as review;
@@ -143,6 +144,20 @@ class _EditorPageState extends State<EditorPage>
       setState(() => _missing = true);
       return;
     }
+    // Opened from the review or at start: a file on a computer downloads here.
+    if (!mounted) return;
+    if (!await ensureLocal(context, path)) {
+      if (mounted && widget.path == path) {
+        setState(
+          () => _error = tr(
+            'Запись не загружена с компьютера. Откройте её снова из боковой панели.',
+            'The recording was not downloaded from the computer. Open it again from the side panel.',
+          ),
+        );
+      }
+      return;
+    }
+    if (!mounted || widget.path != path) return;
     try {
       // Edits of the previous recording go out, the volume's news come in.
       await syncAll();
@@ -988,9 +1003,17 @@ class _EditorPageState extends State<EditorPage>
           settingsKey: 'mobile.browser',
           showSettings: true,
           current: widget.path,
-          onFile: (path) {
+          onFile: (path) async {
+            // A file on a computer downloads first, with the panel still open.
+            final same = path == widget.path && _info != null;
+            if (!same && !await ensureLocal(context, path)) return;
+            if (!mounted) return;
             Navigator.of(context).pop();
-            if (path != widget.path) widget.onOpen(path);
+            if (path != widget.path) {
+              widget.onOpen(path);
+            } else if (_info == null) {
+              _load();
+            }
           },
         ),
       ),

@@ -21,6 +21,48 @@ Future<bool> pathExists({required String path}) =>
 bool isRemotePath({required String path}) =>
     RustLib.instance.api.crateApiRemoteIsRemotePath(path: path);
 
+/// Whether a file on a computer is downloaded and opens without waiting.
+Future<bool> hasLocalCopy({required String path}) =>
+    RustLib.instance.api.crateApiRemoteHasLocalCopy(path: path);
+
+/// Downloads a file from a computer whole before it is opened, so the
+/// waveform and playback read from the phone. Progress about ten times a
+/// second; the last event is `ready` or carries the error.
+Stream<DownloadProgress> downloadRemote({required String path}) =>
+    RustLib.instance.api.crateApiRemoteDownloadRemote(path: path);
+
+void cancelDownload() => RustLib.instance.api.crateApiRemoteCancelDownload();
+
+class DownloadProgress {
+  final PlatformInt64 done;
+  final PlatformInt64 total;
+
+  /// The copy is complete: the file can be opened.
+  final bool ready;
+  final String? error;
+
+  const DownloadProgress({
+    required this.done,
+    required this.total,
+    required this.ready,
+    this.error,
+  });
+
+  @override
+  int get hashCode =>
+      done.hashCode ^ total.hashCode ^ ready.hashCode ^ error.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DownloadProgress &&
+          runtimeType == other.runtimeType &&
+          done == other.done &&
+          total == other.total &&
+          ready == other.ready &&
+          error == other.error;
+}
+
 class RemoteShare {
   /// Where its files live, e.g. `/sc-remote/1a2b3c4d`.
   final String root;
