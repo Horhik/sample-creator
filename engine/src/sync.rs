@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::core::{ChannelMode, Marker, Markup, Part, Region};
+use crate::core::{ChannelMode, Fx, Marker, Markup, Part, Region};
 use crate::lang::tr;
 use crate::store::{FileFull, Library, now_ms};
 
@@ -68,6 +68,8 @@ pub struct RegionState {
     pub keep_pitch: bool,
     #[serde(default)]
     pub parts: Vec<PartState>,
+    #[serde(default)]
+    pub fx: Fx,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -360,6 +362,7 @@ fn from_library(library: &Library, f: &FileFull, root: &Path) -> Result<Recordin
                 channels: channels_key(r.channels).into(),
                 speed: r.speed,
                 keep_pitch: r.keep_pitch,
+                fx: r.fx,
                 parts: r
                     .parts
                     .iter()
@@ -421,6 +424,7 @@ fn to_library(rec: &RecordingState, fingerprint: u64, root: &Path) -> (FileFull,
                 channels: channels_from_key(&r.channels),
                 speed: r.speed,
                 keep_pitch: r.keep_pitch,
+                fx: r.fx,
                 parts: r
                     .parts
                     .iter()
@@ -455,6 +459,7 @@ mod tests {
             channels: ChannelMode::Left,
             speed: 150,
             keep_pitch: true,
+            fx: Default::default(),
             parts: vec![Part {
                 overlap: 0,
                 ..Part::whole(start, start + 50)

@@ -10,9 +10,9 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::core::history;
-use crate::core::{ChannelMode, Id, Marker, Markup, Part, Region};
+use crate::core::{ChannelMode, Fx, Id, Marker, Markup, Part, Region};
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 pub struct Library {
     conn: Connection,
@@ -101,6 +101,17 @@ fn parts_to_db(parts: &[Part]) -> String {
         })
         .collect::<Vec<_>>()
         .join(";")
+}
+
+/// The five effect columns starting at `first`.
+fn fx_from_row(r: &rusqlite::Row, first: usize) -> rusqlite::Result<Fx> {
+    Ok(Fx {
+        gain: r.get(first)?,
+        normalize: r.get(first + 1)?,
+        trim_db: r.get(first + 2)?,
+        compress: r.get(first + 3)?,
+        denoise: r.get(first + 4)?,
+    })
 }
 
 fn parts_from_db(text: &str) -> Vec<Part> {
@@ -237,6 +248,18 @@ impl Library {
                 "BEGIN;
                  ALTER TABLE files ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
                  PRAGMA user_version = 6;
+                 COMMIT;",
+            )?;
+        }
+        if version < 7 {
+            conn.execute_batch(
+                "BEGIN;
+                 ALTER TABLE regions ADD COLUMN gain INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE regions ADD COLUMN normalize INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE regions ADD COLUMN trim_db INTEGER;
+                 ALTER TABLE regions ADD COLUMN compress INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE regions ADD COLUMN denoise INTEGER NOT NULL DEFAULT 0;
+                 PRAGMA user_version = 7;
                  COMMIT;",
             )?;
         }
@@ -424,7 +447,8 @@ impl Library {
             .collect::<rusqlite::Result<_>>()?;
 
         let mut stmt = self.conn.prepare_cached(
-            "SELECT id, start, end, name, color, export, channel_mode, speed, keep_pitch, parts
+            "SELECT id, start, end, name, color, export, channel_mode, speed, keep_pitch, parts,
+                    gain, normalize, trim_db, compress, denoise
              FROM regions WHERE file_id = ?1",
         )?;
         markup.regions = stmt
@@ -441,6 +465,7 @@ impl Library {
                     speed: r.get(7)?,
                     keep_pitch: r.get(8)?,
                     parts: parts_from_db(&r.get::<_, String>(9)?),
+                    fx: fx_from_row(r, 10)?,
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
@@ -454,7 +479,8 @@ impl Library {
         let mut stmt = self.conn.prepare_cached(
             "SELECT f.id, f.path, f.alias, f.sample_rate, f.channels, f.total_frames,
                     r.id, r.start, r.end, r.name, r.color, r.export, r.channel_mode,
-                    r.speed, r.keep_pitch, r.parts
+                    r.speed, r.keep_pitch, r.parts,
+                    r.gain, r.normalize, r.trim_db, r.compress, r.denoise
              FROM regions r JOIN files f ON f.id = r.file_id
              ORDER BY f.path, f.id, r.start, r.end, r.id",
         )?;
@@ -479,6 +505,7 @@ impl Library {
                 speed: r.get(13)?,
                 keep_pitch: r.get(14)?,
                 parts: parts_from_db(&r.get::<_, String>(15)?),
+                fx: fx_from_row(r, 16)?,
             };
             Ok((file, region))
         })?;
@@ -579,12 +606,16 @@ impl Library {
         let id = (r.id != 0).then_some(r.id);
         self.conn.execute(
             "INSERT INTO regions (id, file_id, start, end, name, color, export, channel_mode,
-                                  speed, keep_pitch, parts)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                                  speed, keep_pitch, parts,
+                                  gain, normalize, trim_db, compress, denoise)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
              ON CONFLICT(id) DO UPDATE SET start = excluded.start, end = excluded.end,
                  name = excluded.name, color = excluded.color, export = excluded.export,
                  channel_mode = excluded.channel_mode, speed = excluded.speed,
-                 keep_pitch = excluded.keep_pitch, parts = excluded.parts",
+                 keep_pitch = excluded.keep_pitch, parts = excluded.parts,
+                 gain = excluded.gain, normalize = excluded.normalize,
+                 trim_db = excluded.trim_db, compress = excluded.compress,
+                 denoise = excluded.denoise",
             params![
                 id,
                 r.file,
@@ -596,7 +627,12 @@ impl Library {
                 r.channels.to_db(),
                 r.speed,
                 r.keep_pitch,
-                parts_to_db(&r.parts)
+                parts_to_db(&r.parts),
+                r.fx.gain,
+                r.fx.normalize,
+                r.fx.trim_db,
+                r.fx.compress,
+                r.fx.denoise
             ],
         )?;
         Ok(id.unwrap_or_else(|| self.conn.last_insert_rowid()))
@@ -662,6 +698,13 @@ mod tests {
             channels: ChannelMode::SplitMono,
             speed: 150,
             keep_pitch: true,
+            fx: Fx {
+                gain: 35,
+                normalize: false,
+                trim_db: Some(-45),
+                compress: 30,
+                denoise: true,
+            },
             parts: vec![
                 Part {
                     fade_out: 5,

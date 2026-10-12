@@ -392,16 +392,18 @@ fn process(samples: Vec<f32>, info: &decode::AudioInfo, region: &Region) -> Vec<
     } else {
         samples
     };
-    if region.speed == crate::core::SPEED_NORMAL {
-        return samples;
-    }
-    dsp::change_speed(
-        &samples,
-        usize::from(info.channels),
-        info.sample_rate,
-        f64::from(region.speed) / 100.0,
-        region.keep_pitch,
-    )
+    let samples = if region.speed == crate::core::SPEED_NORMAL {
+        samples
+    } else {
+        dsp::change_speed(
+            &samples,
+            channels,
+            info.sample_rate,
+            f64::from(region.speed) / 100.0,
+            region.keep_pitch,
+        )
+    };
+    dsp::fx::apply(samples, channels, info.sample_rate, &region.fx)
 }
 
 /// The exported file points back at where it came from.
@@ -442,6 +444,7 @@ mod tests {
             channels,
             speed: 100,
             keep_pitch: false,
+            fx: Default::default(),
             parts: Vec::new(),
         }
     }

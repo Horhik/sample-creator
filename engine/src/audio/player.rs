@@ -39,6 +39,8 @@ struct Shared {
     exhausted: AtomicBool,
     /// Playhead in source frames, as f64 bits.
     position: AtomicU64,
+    /// Output gain as f32 bits: a region made louder is heard louder in markup.
+    gain: std::sync::atomic::AtomicU32,
 }
 
 impl Shared {
@@ -88,6 +90,7 @@ impl Player {
             playing: AtomicBool::new(false),
             exhausted: AtomicBool::new(true),
             position: AtomicU64::new(0f64.to_bits()),
+            gain: std::sync::atomic::AtomicU32::new(1f32.to_bits()),
         });
 
         let stream = match format {
@@ -112,15 +115,19 @@ impl Player {
         })
     }
 
+    /// Also resets the gain: whoever loads decides how loud it plays.
     pub fn load(&self, path: PathBuf) {
         self.pause();
+        self.set_gain(1.0);
         self.shared.set_position(0.0);
         self.send(Cmd::Load(path));
     }
 
     /// Plays `samples` (interleaved) instead of a file; positions are frames into it.
+    /// Also resets the gain (rendered audio already has its own).
     pub fn load_memory(&self, samples: Arc<Vec<f32>>, channels: u16, sample_rate: u32) {
         self.pause();
+        self.set_gain(1.0);
         self.shared.set_position(0.0);
         self.send(Cmd::LoadMemory {
             source: decode::MemorySource::new(samples, usize::from(channels)),
@@ -180,6 +187,13 @@ impl Player {
     }
 
     /// Playhead in source frames.
+    /// Volume of what plays from now on, as a factor (1.0 = as recorded).
+    pub fn set_gain(&self, gain: f32) {
+        self.shared
+            .gain
+            .store(gain.max(0.0).to_bits(), Ordering::Relaxed);
+    }
+
     pub fn position(&self) -> u64 {
         f64::from_bits(self.shared.position.load(Ordering::Relaxed)) as u64
     }
@@ -215,6 +229,7 @@ fn fill<T: SizedSample + FromSample<f32>>(out: &mut [T], channels: usize, shared
         return;
     }
 
+    let gain = f32::from_bits(shared.gain.load(Ordering::Relaxed));
     let mut queue = shared.queue.lock().unwrap();
     let mut written = 0;
     while written < out.len() {
@@ -226,7 +241,8 @@ fn fill<T: SizedSample + FromSample<f32>>(out: &mut [T], channels: usize, shared
             .iter_mut()
             .zip(&chunk.samples[chunk.read..])
         {
-            *o = T::from_sample(*s);
+            // Clamped: a boosted region must not wrap around in integer output.
+            *o = T::from_sample((*s * gain).clamp(-1.0, 1.0));
         }
         written += n;
         chunk.read += n;

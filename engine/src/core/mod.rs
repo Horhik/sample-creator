@@ -101,6 +101,71 @@ pub struct Region {
     /// Pieces of the region spliced together in this order, with fades. Empty
     /// means the whole region as is. See [`Region::effective_parts`].
     pub parts: Vec<Part>,
+    /// Volume and dynamics, applied after splicing and the speed change.
+    pub fx: Fx,
+}
+
+/// A region's volume and dynamics. All off by default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Fx {
+    /// Gain in tenths of a dB: 60 is +6 dB. Not used while normalising.
+    pub gain: i16,
+    /// Bring the loudest peak to −1 dBFS, after the other effects.
+    pub normalize: bool,
+    /// Cut quiet at the start and end below this level, dBFS.
+    pub trim_db: Option<i16>,
+    /// Compressor amount, 0 (off) to 100.
+    pub compress: u8,
+    /// Noise reduction for speech (RNNoise).
+    pub denoise: bool,
+}
+
+/// Short labels of the effects in use, e.g. ["+3.5 dB", "compressor"].
+pub fn fx_notes(fx: &Fx) -> Vec<String> {
+    use crate::lang::tr;
+    let mut notes = Vec::new();
+    if fx.trim_db.is_some() {
+        notes.push(tr("без тишины", "silence trimmed").to_owned());
+    }
+    if fx.denoise {
+        notes.push(tr("шумоподавление", "denoised").to_owned());
+    }
+    if fx.compress > 0 {
+        notes.push(format!(
+            "{} {}%",
+            tr("компрессор", "compressor"),
+            fx.compress
+        ));
+    }
+    if fx.normalize {
+        notes.push(tr("нормализация", "normalised").to_owned());
+    } else if fx.gain != 0 {
+        notes.push(format!(
+            "{:+.1} {}",
+            f32::from(fx.gain) / 10.0,
+            tr("дБ", "dB")
+        ));
+    }
+    notes
+}
+
+pub const GAIN_MIN: i16 = -240;
+pub const GAIN_MAX: i16 = 240;
+
+impl Fx {
+    pub fn is_neutral(&self) -> bool {
+        *self == Fx::default()
+    }
+
+    /// The plain gain as a factor, for playing the source louder in markup.
+    pub fn gain_factor(&self) -> f32 {
+        if self.normalize {
+            1.0
+        } else {
+            10f32.powf(f32::from(self.gain) / 200.0)
+        }
+    }
 }
 
 pub const SPEED_MIN: u16 = 25;
@@ -116,7 +181,7 @@ impl Region {
 
     /// The sound differs from a plain copy of `[start, end)`.
     pub fn is_processed(&self) -> bool {
-        self.speed != SPEED_NORMAL || self.is_edited()
+        self.speed != SPEED_NORMAL || self.is_edited() || !self.fx.is_neutral()
     }
 
     /// Cut, rearranged or faded.
