@@ -82,6 +82,7 @@ impl SimpleComponent for App {
                         set_icon_name: "open-menu-symbolic",
                         set_tooltip_text: Some(tr("Настройки", "Settings")),
                         #[wrap(Some)]
+                        #[name = "settings_popover"]
                         set_popover = &gtk::Popover {
                             gtk::Box {
                                 set_orientation: gtk::Orientation::Vertical,
@@ -325,10 +326,13 @@ impl SimpleComponent for App {
             model.review.sender().clone(),
             model.processing.sender().clone(),
         ));
-        let s = sender.clone();
-        widgets
-            .language
-            .connect_selected_notify(move |d| s.input(AppMsg::Language(d.selected())));
+        let (s, popover) = (sender.clone(), widgets.settings_popover.clone());
+        widgets.language.connect_selected_notify(move |d| {
+            s.input(AppMsg::Language(d.selected()));
+            // After the drop-down's own popup, GTK leaves this popover deaf to
+            // clicks outside it; close it, the choice is made.
+            popover.popdown();
+        });
         // Closing the window writes the markup out to volumes that keep it.
         let lib = model.library.clone();
         window.connect_close_request(move |_| {
