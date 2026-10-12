@@ -210,7 +210,11 @@ class _EditorPageState extends State<EditorPage>
     super.dispose();
   }
 
+  /// The side panel plays a held recording: the player is not ours.
+  bool _listPreview = false;
+
   void _tick(Duration _) {
+    if (_listPreview) return;
     final pos = engine.position();
     final playing = engine.isPlaying();
     // Asked here, not while laying out the wave: the label above is built
@@ -1003,6 +1007,17 @@ class _EditorPageState extends State<EditorPage>
           settingsKey: 'mobile.browser',
           showSettings: true,
           current: widget.path,
+          onPreview: (on) {
+            if (on) {
+              engine.pause();
+              _listPreview = true;
+            } else {
+              // The open recording is loaded back: same place, same range.
+              _listPreview = false;
+              engine.seek(pos: _playhead);
+              _applyRange();
+            }
+          },
           onFile: (path) async {
             // A file on a computer downloads first, with the panel still open.
             final same = path == widget.path && _info != null;

@@ -94,3 +94,30 @@ pub fn download_remote(path: String, sink: StreamSink<DownloadProgress>) {
 pub fn cancel_download() {
     DOWNLOAD_CANCEL.store(true, Ordering::Relaxed);
 }
+
+/// Plays a recording from the start while a finger holds it in the file
+/// list. A file on a computer streams, and what is heard stays as the start
+/// of its copy: opening it later downloads only the rest.
+#[flutter_rust_bridge::frb(sync)]
+pub fn preview_file(path: String) {
+    if let Some(p) = crate::state::player() {
+        p.load(path.into());
+        p.play();
+    }
+}
+
+/// Stops the list preview and gives the player back to the open recording.
+#[flutter_rust_bridge::frb(sync)]
+pub fn stop_file_preview() {
+    let Some(p) = crate::state::player() else {
+        return;
+    };
+    p.pause();
+    let open = crate::state::state()
+        .ok()
+        .and_then(|s| s.open.lock().unwrap().as_ref().map(|o| o.rec.path.clone()));
+    match open {
+        Some(path) => p.load(path),
+        None => p.unload(),
+    }
+}

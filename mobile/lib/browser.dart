@@ -85,6 +85,9 @@ class FileBrowser extends StatefulWidget {
   /// The recording currently open, highlighted.
   final String? current;
 
+  /// A recording is held to listen to it (true) and let go (false).
+  final void Function(bool on)? onPreview;
+
   /// Reports the folder being shown, e.g. for a "choose this folder" button.
   final void Function(String? dir)? onDir;
 
@@ -96,6 +99,7 @@ class FileBrowser extends StatefulWidget {
     required this.settingsKey,
     this.onFile,
     this.current,
+    this.onPreview,
     this.onDir,
     this.showSettings = false,
   });
@@ -111,6 +115,23 @@ class FileBrowserState extends State<FileBrowser> {
   String? _dir;
   List<engine.Entry> _entries = [];
   String? _error;
+
+  /// The recording playing while a finger holds it.
+  String? _previewing;
+
+  void _startPreview(String path) {
+    HapticFeedback.mediumImpact();
+    widget.onPreview?.call(true);
+    remote_api.previewFile(path: path);
+    setState(() => _previewing = path);
+  }
+
+  void _stopPreview() {
+    if (_previewing == null) return;
+    remote_api.stopFilePreview();
+    widget.onPreview?.call(false);
+    if (mounted) setState(() => _previewing = null);
+  }
 
   String? get dir => _dir;
 
@@ -138,6 +159,10 @@ class FileBrowserState extends State<FileBrowser> {
   void dispose() {
     volumesChanged.removeListener(_onVolumesChanged);
     sharedFolders.removeListener(_onShared);
+    if (_previewing != null) {
+      remote_api.stopFilePreview();
+      widget.onPreview?.call(false);
+    }
     super.dispose();
   }
 
@@ -449,20 +474,36 @@ class FileBrowserState extends State<FileBrowser> {
           if (e.regions > 0) tr('${e.regions} рег.', '${e.regions} reg.'),
           if (e.markers > 0) tr('${e.markers} марк.', '${e.markers} mark.'),
         ].join(' · ');
-        return ListTile(
-          selected: e.path == widget.current,
-          leading: Icon(
-            e.reviewed ? Icons.check_circle_outline : Icons.graphic_eq,
-            color: e.regions > 0 ? scheme.primary : null,
+        final listening = _previewing == e.path;
+        // Hold to listen from the start, let go to stop.
+        return GestureDetector(
+          onLongPressStart: (_) => _startPreview(e.path),
+          onLongPressEnd: (_) => _stopPreview(),
+          onLongPressCancel: _stopPreview,
+          child: ListTile(
+            selected: e.path == widget.current || listening,
+            leading: Icon(
+              listening
+                  ? Icons.volume_up
+                  : e.reviewed
+                  ? Icons.check_circle_outline
+                  : Icons.graphic_eq,
+              color: e.regions > 0 || listening ? scheme.primary : null,
+            ),
+            title: Text(e.alias ?? e.name),
+            subtitle: Text(
+              listening
+                  ? tr(
+                      'Слушаю с начала, отпустите — стоп',
+                      'Playing from the start, let go to stop',
+                    )
+                  : [
+                      if (e.alias != null) e.name,
+                      badges,
+                    ].where((s) => s.isNotEmpty).join(' · '),
+            ),
+            onTap: () => widget.onFile?.call(e.path),
           ),
-          title: Text(e.alias ?? e.name),
-          subtitle: Text(
-            [
-              if (e.alias != null) e.name,
-              badges,
-            ].where((s) => s.isNotEmpty).join(' · '),
-          ),
-          onTap: () => widget.onFile?.call(e.path),
         );
       },
     );

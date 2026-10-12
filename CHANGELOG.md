@@ -2,6 +2,13 @@
 
 <p><b>English</b> | <a href="CHANGELOG.ru.md">Русский</a></p>
 
+## 0.3.1
+
+- Hold a recording from a computer in the file list to listen to it from the
+  start while it streams; let go to stop. What was heard is kept, and opening
+  the recording then downloads only the rest.
+- A cancelled or broken download goes on later from where it stopped.
+
 ## 0.3.0
 
 - Folder sharing: right-click a folder in the desktop tree → Share folder…,

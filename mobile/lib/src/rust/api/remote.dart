@@ -33,6 +33,15 @@ Stream<DownloadProgress> downloadRemote({required String path}) =>
 
 void cancelDownload() => RustLib.instance.api.crateApiRemoteCancelDownload();
 
+/// Plays a recording from the start while a finger holds it in the file
+/// list. A file on a computer streams, and what is heard stays as the start
+/// of its copy: opening it later downloads only the rest.
+void previewFile({required String path}) =>
+    RustLib.instance.api.crateApiRemotePreviewFile(path: path);
+
+/// Stops the list preview and gives the player back to the open recording.
+void stopFilePreview() => RustLib.instance.api.crateApiRemoteStopFilePreview();
+
 class DownloadProgress {
   final PlatformInt64 done;
   final PlatformInt64 total;

@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1759823311;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1586457175;
 
 // Section: executor
 
@@ -1336,6 +1336,38 @@ fn wire__crate__api__review__prerender_impl(
         },
     )
 }
+fn wire__crate__api__remote__preview_file_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "preview_file",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok({
+                    crate::api::remote::preview_file(api_path);
+                })?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__review__preview_processed_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2603,6 +2635,37 @@ fn wire__crate__api__sync__state_file_name_impl(
         },
     )
 }
+fn wire__crate__api__remote__stop_file_preview_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "stop_file_preview",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok({
+                    crate::api::remote::stop_file_preview();
+                })?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__review__stop_preview_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -3462,35 +3525,35 @@ fn pde_ffi_dispatcher_primary_impl(
         29 => wire__crate__api__engine__open_file_impl(port, ptr, rust_vec_len, data_len),
         32 => wire__crate__api__remote__path_exists_impl(port, ptr, rust_vec_len, data_len),
         38 => wire__crate__api__review__prerender_impl(port, ptr, rust_vec_len, data_len),
-        39 => wire__crate__api__review__preview_processed_impl(port, ptr, rust_vec_len, data_len),
-        44 => wire__crate__api__review__processing_redo_impl(port, ptr, rust_vec_len, data_len),
-        45 => wire__crate__api__review__processing_undo_impl(port, ptr, rust_vec_len, data_len),
-        47 => wire__crate__api__engine__redo_impl(port, ptr, rust_vec_len, data_len),
-        48 => wire__crate__api__review__remove_part_impl(port, ptr, rust_vec_len, data_len),
-        49 => wire__crate__api__engine__rename_impl(port, ptr, rust_vec_len, data_len),
-        50 => wire__crate__api__review__reset_parts_impl(port, ptr, rust_vec_len, data_len),
-        51 => wire__crate__api__review__review_close_impl(port, ptr, rust_vec_len, data_len),
-        52 => wire__crate__api__review__review_delete_impl(port, ptr, rust_vec_len, data_len),
-        53 => wire__crate__api__review__review_rename_impl(port, ptr, rust_vec_len, data_len),
-        54 => wire__crate__api__review__review_set_channels_impl(port, ptr, rust_vec_len, data_len),
-        55 => wire__crate__api__review__review_set_export_impl(port, ptr, rust_vec_len, data_len),
-        56 => wire__crate__api__review__review_set_fx_impl(port, ptr, rust_vec_len, data_len),
-        57 => wire__crate__api__review__review_set_speed_impl(port, ptr, rust_vec_len, data_len),
-        59 => wire__crate__api__engine__set_alias_impl(port, ptr, rust_vec_len, data_len),
-        60 => wire__crate__api__engine__set_color_impl(port, ptr, rust_vec_len, data_len),
-        63 => wire__crate__api__review__set_part_bounds_impl(port, ptr, rust_vec_len, data_len),
-        64 => wire__crate__api__review__set_part_fades_impl(port, ptr, rust_vec_len, data_len),
-        65 => wire__crate__api__review__set_part_overlap_impl(port, ptr, rust_vec_len, data_len),
-        67 => wire__crate__api__engine__set_region_bounds_impl(port, ptr, rust_vec_len, data_len),
-        68 => wire__crate__api__engine__set_region_export_impl(port, ptr, rust_vec_len, data_len),
-        69 => wire__crate__api__engine__set_region_gain_impl(port, ptr, rust_vec_len, data_len),
-        70 => wire__crate__api__engine__set_region_speed_impl(port, ptr, rust_vec_len, data_len),
-        71 => wire__crate__api__review__set_setting_impl(port, ptr, rust_vec_len, data_len),
-        72 => wire__crate__api__review__split_at_output_impl(port, ptr, rust_vec_len, data_len),
-        73 => wire__crate__api__review__split_region_impl(port, ptr, rust_vec_len, data_len),
-        76 => wire__crate__api__sync__sync_all_volumes_impl(port, ptr, rust_vec_len, data_len),
-        78 => wire__crate__api__sync__sync_volume_impl(port, ptr, rust_vec_len, data_len),
-        80 => wire__crate__api__engine__undo_impl(port, ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__review__preview_processed_impl(port, ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__review__processing_redo_impl(port, ptr, rust_vec_len, data_len),
+        46 => wire__crate__api__review__processing_undo_impl(port, ptr, rust_vec_len, data_len),
+        48 => wire__crate__api__engine__redo_impl(port, ptr, rust_vec_len, data_len),
+        49 => wire__crate__api__review__remove_part_impl(port, ptr, rust_vec_len, data_len),
+        50 => wire__crate__api__engine__rename_impl(port, ptr, rust_vec_len, data_len),
+        51 => wire__crate__api__review__reset_parts_impl(port, ptr, rust_vec_len, data_len),
+        52 => wire__crate__api__review__review_close_impl(port, ptr, rust_vec_len, data_len),
+        53 => wire__crate__api__review__review_delete_impl(port, ptr, rust_vec_len, data_len),
+        54 => wire__crate__api__review__review_rename_impl(port, ptr, rust_vec_len, data_len),
+        55 => wire__crate__api__review__review_set_channels_impl(port, ptr, rust_vec_len, data_len),
+        56 => wire__crate__api__review__review_set_export_impl(port, ptr, rust_vec_len, data_len),
+        57 => wire__crate__api__review__review_set_fx_impl(port, ptr, rust_vec_len, data_len),
+        58 => wire__crate__api__review__review_set_speed_impl(port, ptr, rust_vec_len, data_len),
+        60 => wire__crate__api__engine__set_alias_impl(port, ptr, rust_vec_len, data_len),
+        61 => wire__crate__api__engine__set_color_impl(port, ptr, rust_vec_len, data_len),
+        64 => wire__crate__api__review__set_part_bounds_impl(port, ptr, rust_vec_len, data_len),
+        65 => wire__crate__api__review__set_part_fades_impl(port, ptr, rust_vec_len, data_len),
+        66 => wire__crate__api__review__set_part_overlap_impl(port, ptr, rust_vec_len, data_len),
+        68 => wire__crate__api__engine__set_region_bounds_impl(port, ptr, rust_vec_len, data_len),
+        69 => wire__crate__api__engine__set_region_export_impl(port, ptr, rust_vec_len, data_len),
+        70 => wire__crate__api__engine__set_region_gain_impl(port, ptr, rust_vec_len, data_len),
+        71 => wire__crate__api__engine__set_region_speed_impl(port, ptr, rust_vec_len, data_len),
+        72 => wire__crate__api__review__set_setting_impl(port, ptr, rust_vec_len, data_len),
+        73 => wire__crate__api__review__split_at_output_impl(port, ptr, rust_vec_len, data_len),
+        74 => wire__crate__api__review__split_region_impl(port, ptr, rust_vec_len, data_len),
+        78 => wire__crate__api__sync__sync_all_volumes_impl(port, ptr, rust_vec_len, data_len),
+        80 => wire__crate__api__sync__sync_volume_impl(port, ptr, rust_vec_len, data_len),
+        82 => wire__crate__api__engine__undo_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3519,19 +3582,21 @@ fn pde_ffi_dispatcher_sync_impl(
         35 => wire__crate__api__engine__peaks_done_impl(ptr, rust_vec_len, data_len),
         36 => wire__crate__api__engine__play_impl(ptr, rust_vec_len, data_len),
         37 => wire__crate__api__engine__position_impl(ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__review__preview_source_impl(ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__review__processed_peaks_impl(ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__review__processing_can_redo_impl(ptr, rust_vec_len, data_len),
-        43 => wire__crate__api__review__processing_can_undo_impl(ptr, rust_vec_len, data_len),
-        46 => wire__crate__api__review__reattach_impl(ptr, rust_vec_len, data_len),
-        58 => wire__crate__api__engine__seek_impl(ptr, rust_vec_len, data_len),
-        61 => wire__crate__api__engine__set_gain_impl(ptr, rust_vec_len, data_len),
-        62 => wire__crate__api__engine__set_language_impl(ptr, rust_vec_len, data_len),
-        66 => wire__crate__api__engine__set_range_impl(ptr, rust_vec_len, data_len),
-        74 => wire__crate__api__sync__state_file_name_impl(ptr, rust_vec_len, data_len),
-        75 => wire__crate__api__review__stop_preview_impl(ptr, rust_vec_len, data_len),
-        77 => wire__crate__api__sync__sync_info_impl(ptr, rust_vec_len, data_len),
-        79 => wire__crate__api__review__template_help_impl(ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__remote__preview_file_impl(ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__review__preview_source_impl(ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__review__processed_peaks_impl(ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__review__processing_can_redo_impl(ptr, rust_vec_len, data_len),
+        44 => wire__crate__api__review__processing_can_undo_impl(ptr, rust_vec_len, data_len),
+        47 => wire__crate__api__review__reattach_impl(ptr, rust_vec_len, data_len),
+        59 => wire__crate__api__engine__seek_impl(ptr, rust_vec_len, data_len),
+        62 => wire__crate__api__engine__set_gain_impl(ptr, rust_vec_len, data_len),
+        63 => wire__crate__api__engine__set_language_impl(ptr, rust_vec_len, data_len),
+        67 => wire__crate__api__engine__set_range_impl(ptr, rust_vec_len, data_len),
+        75 => wire__crate__api__sync__state_file_name_impl(ptr, rust_vec_len, data_len),
+        76 => wire__crate__api__remote__stop_file_preview_impl(ptr, rust_vec_len, data_len),
+        77 => wire__crate__api__review__stop_preview_impl(ptr, rust_vec_len, data_len),
+        79 => wire__crate__api__sync__sync_info_impl(ptr, rust_vec_len, data_len),
+        81 => wire__crate__api__review__template_help_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }

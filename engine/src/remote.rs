@@ -32,6 +32,9 @@ const TICKET_PREFIX: &str = "sc1";
 const BLOCK: u64 = 512 * 1024;
 /// Blocks kept per open remote file.
 const BLOCKS_KEPT: usize = 32;
+/// Blocks fetched after a missing one, in parallel with it: streaming then
+/// waits one round trip per two megabytes, not per block.
+const READ_AHEAD: u64 = 3;
 const MAX_READ: u32 = 4 * 1024 * 1024;
 
 /// One runtime for all iroh work; the engine itself is synchronous.
@@ -521,6 +524,9 @@ pub fn open(id: &str, inner: &str) -> io::Result<VFile> {
         len: meta.len,
         pos: 0,
         blocks: Arc::new(Mutex::new(VecDeque::new())),
+        part: copies_dir()
+            .ok()
+            .map(|d| d.join(format!("{}.part", copy_name(id, inner, &meta)))),
     }))
 }
 
@@ -533,13 +539,38 @@ pub fn metadata(id: &str, inner: &str) -> io::Result<Meta> {
 //
 // A remote recording is downloaded whole into the app's cache before it is
 // opened: decoding, the waveform and playback then read from local storage,
-// and the file still opens while the computer is away.
+// and the file still opens while the computer is away. Until then its start
+// grows in `<copy>.part`: what streaming reads from the beginning (a preview)
+// lands there too, and a download goes on from where it ends.
 
 /// Room for copies; the least recently used go first.
 const COPIES_MAX: u64 = 4 * 1024 * 1024 * 1024;
 /// Bytes per request while downloading, and requests in flight.
 const CHUNK: u64 = 2 * 1024 * 1024;
 const IN_FLIGHT: usize = 4;
+
+/// Serialises appends to partial copies (a preview and a download may meet).
+static PART_LOCK: Mutex<()> = Mutex::new(());
+
+/// Appends `bytes` read at `offset` to a partial copy if they extend it;
+/// anything else (a gap, or bytes it has already) is left out.
+fn append_part(part: &Path, offset: u64, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    let _guard = PART_LOCK.lock().unwrap();
+    let have = std::fs::metadata(part).map_or(0, |m| m.len());
+    let end = offset + bytes.len() as u64;
+    if have < offset || have >= end {
+        return Ok(());
+    }
+    if let Some(dir) = part.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::File::options()
+        .create(true)
+        .append(true)
+        .open(part)?
+        .write_all(&bytes[(have - offset) as usize..])
+}
 
 /// Copies checked or fetched in this session: "id/inner" → file.
 static COPIES: Mutex<Option<HashMap<String, PathBuf>>> = Mutex::new(None);
@@ -652,10 +683,11 @@ pub fn download(
     let name = copy_name(id, &inner, &meta);
     let target = dir.join(&name);
     let part = dir.join(format!("{name}.part"));
-    let fetched = fetch(&c, &inner, meta.len, &part, progress, cancel);
-    if let Err(e) = fetched {
+    // A cancelled or broken download keeps its part and goes on next time.
+    fetch(&c, &inner, meta.len, &part, progress, cancel)?;
+    if std::fs::metadata(&part).map_or(0, |m| m.len()) != meta.len {
         let _ = std::fs::remove_file(&part);
-        return Err(e);
+        bail!("{}", tr("копия получилась неполной", "the copy came out incomplete"));
     }
     std::fs::rename(&part, &target)?;
     prune(&dir, &copy_prefix(id, &inner), &target);
@@ -663,7 +695,8 @@ pub fn download(
     Ok(())
 }
 
-/// Several requests in flight, written in order.
+/// Fetches the rest of a partial copy: several requests in flight, appended
+/// in order.
 fn fetch(
     c: &Arc<Client>,
     inner: &str,
@@ -672,14 +705,22 @@ fn fetch(
     progress: &mut dyn FnMut(u64, u64),
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<()> {
-    use std::io::Write;
     use std::sync::atomic::Ordering;
 
-    let mut out = io::BufWriter::new(std::fs::File::create(part)?);
-    progress(0, len);
+    // Whole blocks only: a part cut short mid-write is trimmed back.
+    let start = {
+        let _guard = PART_LOCK.lock().unwrap();
+        let have = std::fs::metadata(part).map_or(0, |m| m.len());
+        let start = if have >= len { len } else { have / BLOCK * BLOCK };
+        if have > start {
+            std::fs::File::options().write(true).open(part)?.set_len(start)?;
+        }
+        start
+    };
+    progress(start, len);
     runtime().block_on(async {
         let mut pending = VecDeque::new();
-        let (mut next, mut done) = (0u64, 0u64);
+        let (mut next, mut done) = (start, start);
         while done < len {
             while pending.len() < IN_FLIGHT && next < len {
                 let want = (len - next).min(CHUNK);
@@ -706,16 +747,15 @@ fn fetch(
             }
             if bytes.len() as u64 != want {
                 pending.iter().for_each(|(_, t)| t.abort());
+                let _ = std::fs::remove_file(part);
                 bail!("{}", tr("файл на компьютере изменился", "the file changed on the computer"));
             }
-            out.write_all(&bytes)?;
+            append_part(part, done, &bytes)?;
             done += want;
             progress(done, len);
         }
         Ok::<_, anyhow::Error>(())
-    })?;
-    out.flush()?;
-    Ok(())
+    })
 }
 
 /// Drops older versions of the file just fetched and, past [`COPIES_MAX`],
@@ -759,6 +799,9 @@ pub struct RemoteFile {
     len: u64,
     pos: u64,
     blocks: Arc<Mutex<Blocks>>,
+    /// The partial copy: blocks it has are read from it, and blocks read in
+    /// order from its end extend it.
+    part: Option<PathBuf>,
 }
 
 impl RemoteFile {
@@ -770,29 +813,84 @@ impl RemoteFile {
         self.len == 0
     }
 
-    fn block(&self, index: u64) -> io::Result<Arc<Vec<u8>>> {
-        {
-            let mut blocks = self.blocks.lock().unwrap();
-            if let Some(i) = blocks.iter().position(|(k, _)| *k == index) {
-                let b = blocks.remove(i).unwrap();
-                let data = b.1.clone();
-                blocks.push_front(b);
-                return Ok(data);
-            }
+    fn cached(&self, index: u64) -> Option<Arc<Vec<u8>>> {
+        let mut blocks = self.blocks.lock().unwrap();
+        let i = blocks.iter().position(|(k, _)| *k == index)?;
+        let b = blocks.remove(i).unwrap();
+        let data = b.1.clone();
+        blocks.push_front(b);
+        Some(data)
+    }
+
+    fn keep(&self, index: u64, data: Arc<Vec<u8>>) {
+        let mut blocks = self.blocks.lock().unwrap();
+        blocks.push_front((index, data));
+        blocks.truncate(BLOCKS_KEPT);
+    }
+
+    /// A block the partial copy has already.
+    fn part_block(&self, index: u64) -> Option<Arc<Vec<u8>>> {
+        let part = self.part.as_ref()?;
+        let start = index * BLOCK;
+        let end = (start + BLOCK).min(self.len);
+        let mut f = std::fs::File::open(part).ok()?;
+        if f.metadata().ok()?.len() < end {
+            return None;
         }
-        let (_, bytes) = self
-            .client
-            .request(&Op::Read {
-                path: self.path.clone(),
-                offset: index * BLOCK,
-                len: BLOCK as u32,
+        f.seek(SeekFrom::Start(start)).ok()?;
+        let mut data = vec![0; (end - start) as usize];
+        f.read_exact(&mut data).ok()?;
+        Some(Arc::new(data))
+    }
+
+    fn block(&self, index: u64) -> io::Result<Arc<Vec<u8>>> {
+        if let Some(data) = self.cached(index) {
+            return Ok(data);
+        }
+        if let Some(data) = self.part_block(index) {
+            self.keep(index, data.clone());
+            return Ok(data);
+        }
+        let last = self.len.saturating_sub(1) / BLOCK;
+        let wanted: Vec<u64> = (index..=(index + READ_AHEAD).min(last))
+            .filter(|&i| i == index || !self.blocks.lock().unwrap().iter().any(|(k, _)| *k == i))
+            .collect();
+        let fetched = runtime()
+            .block_on(async {
+                let tasks: Vec<_> = wanted
+                    .iter()
+                    .map(|&i| {
+                        let req = serde_json::to_vec(&Request {
+                            token: self.client.token.clone(),
+                            op: Op::Read {
+                                path: self.path.clone(),
+                                offset: i * BLOCK,
+                                len: BLOCK as u32,
+                            },
+                        });
+                        let c = self.client.clone();
+                        tokio::spawn(async move { c.send(&req?).await.map(|(_, b)| (i, b)) })
+                    })
+                    .collect();
+                let mut out = Vec::new();
+                for t in tasks {
+                    out.push(t.await??);
+                }
+                Ok::<_, anyhow::Error>(out)
             })
             .map_err(io_err)?;
-        let data = Arc::new(bytes);
-        let mut blocks = self.blocks.lock().unwrap();
-        blocks.push_front((index, data.clone()));
-        blocks.truncate(BLOCKS_KEPT);
-        Ok(data)
+        let mut found = None;
+        for (i, bytes) in fetched {
+            if let Some(part) = &self.part {
+                let _ = append_part(part, i * BLOCK, &bytes);
+            }
+            let data = Arc::new(bytes);
+            if i == index {
+                found = Some(data.clone());
+            }
+            self.keep(i, data);
+        }
+        found.ok_or_else(|| io::Error::other("block missing"))
     }
 }
 
@@ -887,14 +985,31 @@ mod loopback {
         src.read(&mut out, 10).unwrap();
         assert!((out[0] - 40_000.0 / 65_536.0).abs() < 1e-6);
 
-        // Downloaded whole, it then opens from the cache, even offline.
+        // Streaming from the start began the partial copy.
         assert!(!has_copy(&path));
-        let len = crate::vfs::metadata(&path).unwrap().len;
+        let meta = crate::vfs::metadata(&path).unwrap();
+        let len = meta.len;
+        let (id, inner) = crate::vfs::split_remote(&path).unwrap();
+        let part = copies_dir()
+            .unwrap()
+            .join(format!("{}.part", copy_name(id, &inner, &meta)));
+        let streamed = std::fs::metadata(&part).unwrap().len();
+        assert_eq!(streamed, (READ_AHEAD + 1) * BLOCK);
+
+        // A cancelled download keeps it; the next one goes on from its end.
+        let cancel = std::sync::atomic::AtomicBool::new(true);
+        let mut first = None;
+        assert!(download(&path, &mut |done, _| { first.get_or_insert(done); }, &cancel).is_err());
+        assert_eq!(first, Some(streamed));
+        assert_eq!(std::fs::metadata(&part).unwrap().len(), streamed);
+
+        // Downloaded whole, it then opens from the cache, even offline.
+        cancel.store(false, std::sync::atomic::Ordering::Relaxed);
         let (mut seen, mut calls) = (0, 0);
-        let cancel = std::sync::atomic::AtomicBool::new(false);
         download(&path, &mut |done, _| (seen, calls) = (done, calls + 1), &cancel).unwrap();
         assert_eq!(seen, len);
-        assert!(calls > 2);
+        assert!(calls >= 2);
+        assert!(!part.exists());
         assert!(has_copy(&path));
         assert!(matches!(crate::vfs::open(&path).unwrap(), VFile::Local(_)));
         let mut src = decode::open(&path).unwrap().1;
