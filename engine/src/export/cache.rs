@@ -19,6 +19,7 @@ const IN_MEMORY: usize = 6;
 const ON_DISK: usize = 40;
 const MAGIC: &[u8; 4] = b"SCR1";
 
+#[derive(Debug)]
 pub struct Rendered {
     pub channels: u16,
     pub sample_rate: u32,
@@ -48,7 +49,17 @@ fn key(path: &Path, r: &Region) -> u64 {
             h.write_u64(d.as_secs());
         }
     }
-    h.write(format!("{:?}{:?}{}{}{:?}", r.start..r.end, r.parts, r.speed, r.keep_pitch, r.fx).as_bytes());
+    h.write(
+        format!(
+            "{:?}{:?}{}{}{:?}",
+            r.start..r.end,
+            r.parts,
+            r.speed,
+            r.keep_pitch,
+            r.fx
+        )
+        .as_bytes(),
+    );
     h.digest()
 }
 
@@ -141,7 +152,9 @@ fn to_disk(k: u64, r: &Rendered) -> Result<()> {
 
 /// Keeps the newest renders only.
 fn prune(dir: &Path) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     let mut files: Vec<(std::time::SystemTime, PathBuf)> = entries
         .filter_map(|e| e.ok())
         .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))

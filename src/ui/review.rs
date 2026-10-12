@@ -62,6 +62,14 @@ pub enum ReviewMsg {
     Leave,
     Preview(Id),
     PreviewEnded,
+    /// A processed region was rendered (or failed) for its preview.
+    Rendered {
+        id: Id,
+        result: Result<Arc<export::cache::Rendered>, String>,
+    },
+    /// Ask, then delete the ticked regions.
+    AskDelete,
+    DeleteTicked,
     SetExport(Id, bool),
     ColorFilter(Option<ColorIdx>),
     OnlyExport(bool),
@@ -178,6 +186,16 @@ impl SimpleComponent for Review {
                         connect_clicked => ReviewMsg::Cancel,
                     },
                     gtk::Button {
+                        add_css_class: "destructive-action",
+                        set_label: tr("Удалить…", "Delete…"),
+                        set_tooltip_text: Some(tr("Удалить отмеченные регионы", "Delete the ticked regions")),
+                        #[watch]
+                        set_visible: model.export.is_none(),
+                        #[watch]
+                        set_sensitive: model.to_export().count() > 0,
+                        connect_clicked => ReviewMsg::AskDelete,
+                    },
+                    gtk::Button {
                         add_css_class: "suggested-action",
                         #[watch]
                         set_label: &format!("{} {}…", tr("Экспортировать", "Export"), model.to_export().count()),
@@ -268,6 +286,31 @@ impl SimpleComponent for Review {
                 self.previewing = None;
                 self.update_play_icons();
             }
+            ReviewMsg::Rendered { id, result } => {
+                // Stopped or another region chosen while it rendered.
+                if self.previewing != Some(id) {
+                    return;
+                }
+                match (result, self.player.clone()) {
+                    (Ok(r), Some(player)) => {
+                        player.load_memory(r.samples.clone(), r.channels, r.sample_rate);
+                        self.loaded = None;
+                        player.play();
+                        self.watch_end(player, &sender);
+                    }
+                    (Err(err), _) => {
+                        self.previewing = None;
+                        self.toast(&format!(
+                            "{}: {err}",
+                            tr("Не удалось обработать", "Could not process")
+                        ));
+                    }
+                    _ => {}
+                }
+                self.update_play_icons();
+            }
+            ReviewMsg::AskDelete => self.ask_delete(&sender),
+            ReviewMsg::DeleteTicked => self.delete_ticked(&sender),
             ReviewMsg::SetExport(id, export) => self.set_export(id, export),
             ReviewMsg::ColorFilter(color) => {
                 self.color_filter = color;
@@ -530,7 +573,7 @@ impl Review {
         row.append(&text);
 
         if let Some(job) = self.peaks.get(&file.id) {
-            row.append(&mini_wave(job.peaks.clone(), r.start, r.end, r.color));
+            row.append(&mini_wave(job.peaks.clone(), file.path.clone(), r.clone()));
         }
 
         let play = gtk::Button::builder()
@@ -583,6 +626,91 @@ impl Review {
         }
     }
 
+    fn ask_delete(&self, sender: &ComponentSender<Self>) {
+        let ticked: Vec<String> = self
+            .to_export()
+            .map(|(f, r)| {
+                let name = if r.name.is_empty() {
+                    tr("без имени", "untitled")
+                } else {
+                    &r.name
+                };
+                format!("• {name} · {}", f.title())
+            })
+            .collect();
+        if ticked.is_empty() {
+            return;
+        }
+        let shown = 12;
+        let mut body = ticked
+            .iter()
+            .take(shown)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        if ticked.len() > shown {
+            body.push_str(&if is_russian() {
+                format!("\n…и ещё {}", ticked.len() - shown)
+            } else {
+                format!("\n…and {} more", ticked.len() - shown)
+            });
+        }
+        body.push_str(&format!(
+            "\n\n{}",
+            tr(
+                "Удаляются только регионы, записи не трогаются.",
+                "Only the regions go; the recordings stay as they are."
+            )
+        ));
+        let title = if is_russian() {
+            format!("Удалить регионы ({})?", ticked.len())
+        } else {
+            format!("Delete {} regions?", ticked.len())
+        };
+        let dialog = adw::AlertDialog::new(Some(&title), Some(&body));
+        dialog.add_responses(&[
+            ("cancel", tr("Отмена", "Cancel")),
+            ("delete", tr("Удалить", "Delete")),
+        ]);
+        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        let s = sender.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response == "delete" {
+                s.input(ReviewMsg::DeleteTicked);
+            }
+        });
+        dialog.present(Some(&self.toasts));
+    }
+
+    fn delete_ticked(&mut self, sender: &ComponentSender<Self>) {
+        self.stop_preview();
+        let ids: Vec<Id> = self.to_export().map(|(_, r)| r.id).collect();
+        let lib = &*self.library;
+        let result = lib.transaction(&mut || {
+            for id in &ids {
+                lib.delete_region(*id)?;
+            }
+            Ok(())
+        });
+        match result {
+            Ok(()) => {
+                self.rows.retain(|(_, r)| !ids.contains(&r.id));
+                self.rebuild(sender);
+                self.toast(&format!(
+                    "{}: {}",
+                    tr("Удалено регионов", "Regions deleted"),
+                    ids.len()
+                ));
+            }
+            Err(err) => self.toast(&format!(
+                "{}: {err:#}",
+                tr("Не удалось удалить", "Could not delete")
+            )),
+        }
+    }
+
     fn toggle_preview(&mut self, id: Id, sender: &ComponentSender<Self>) {
         let Some(player) = self.player.clone() else {
             return;
@@ -598,13 +726,29 @@ impl Review {
             player.load(file.path.clone());
             self.loaded = Some(file.path.clone());
         }
+        self.previewing = Some(id);
+        // A processed region is heard as it will be exported: rendered once,
+        // then from the cache.
+        if region.is_processed() {
+            player.pause();
+            self.update_play_icons();
+            let input = sender.input_sender().clone();
+            std::thread::spawn(move || {
+                let result =
+                    export::cache::rendered(&file.path, &region).map_err(|e| format!("{e:#}"));
+                input.emit(ReviewMsg::Rendered { id, result });
+            });
+            return;
+        }
         player.set_range(region.start, Some(region.end), false);
         player.seek(region.start);
         player.play();
-        self.previewing = Some(id);
         self.update_play_icons();
+        self.watch_end(player, sender);
+    }
 
-        // Flip the icon back when the region has played out.
+    /// Flips the icon back when the preview has played out.
+    fn watch_end(&self, player: Rc<Player>, sender: &ComponentSender<Self>) {
         let s = sender.clone();
         let started = Instant::now();
         glib::timeout_add_local(Duration::from_millis(100), move || {
@@ -763,7 +907,9 @@ fn queue_draw_all(widget: &gtk::Widget) {
     }
 }
 
-fn mini_wave(peaks: Arc<peaks::Peaks>, start: u64, end: u64, color: ColorIdx) -> gtk::DrawingArea {
+/// The region's waveform; for a processed region its result once rendered.
+fn mini_wave(peaks: Arc<peaks::Peaks>, path: PathBuf, region: Region) -> gtk::DrawingArea {
+    let (start, end, color) = (region.start, region.end, region.color);
     let area = gtk::DrawingArea::builder()
         .content_width(MINI_W)
         .content_height(MINI_H)
@@ -788,6 +934,29 @@ fn mini_wave(peaks: Arc<peaks::Peaks>, start: u64, end: u64, color: ColorIdx) ->
             f64::from(rgba.blue()),
             0.9,
         );
+        let rendered = region
+            .is_processed()
+            .then(|| export::cache::cached(&path, &region))
+            .flatten();
+        if let Some(r) = rendered {
+            let ch = usize::from(r.channels.max(1));
+            let frames = r.samples.len() / ch;
+            let cols = w.max(1.0) as usize;
+            let points: Vec<(f64, f32, f32)> = (0..cols)
+                .map(|x| {
+                    let a = x * frames / cols;
+                    let b = ((x + 1) * frames / cols).max(a + 1).min(frames);
+                    let (mut lo, mut hi) = (0f32, 0f32);
+                    for v in &r.samples[a * ch..b * ch] {
+                        lo = lo.min(*v);
+                        hi = hi.max(*v);
+                    }
+                    (x as f64 + 0.5, lo, hi)
+                })
+                .collect();
+            fill_envelope(cr, &points, mid, mid - 1.0).ok();
+            return;
+        }
         let reader = peaks.read();
         let points = envelope(&reader, 0..peaks.channels, start as f64, per_px, w);
         fill_envelope(cr, &points, mid, mid - 1.0).ok();

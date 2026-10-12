@@ -507,7 +507,18 @@ impl SimpleComponent for Processing {
                 self.rebuild_list();
                 self.fill_controls();
             }
-            ProcessingMsg::Leave => self.stop(),
+            ProcessingMsg::Leave => {
+                self.stop();
+                // Ready for the review (and the next visit) without a wait.
+                if let Some((file, region)) = self.row().cloned()
+                    && region.is_processed()
+                    && file.path.exists()
+                {
+                    std::thread::spawn(move || {
+                        export::cache::rendered(&file.path, &region).ok();
+                    });
+                }
+            }
             ProcessingMsg::DeleteSelectedPart => {
                 let selected = self.wave_state.borrow().selected;
                 match selected {
@@ -1034,8 +1045,8 @@ impl Processing {
         let input = sender.input_sender().clone();
         let path: PathBuf = file.path.clone();
         std::thread::spawn(move || {
-            let result = export::render_to_memory(&path, &region)
-                .map(|(info, samples)| (Arc::new(samples), info.channels, info.sample_rate))
+            let result = export::cache::rendered(&path, &region)
+                .map(|r| (r.samples.clone(), r.channels, r.sample_rate))
                 .map_err(|e| format!("{e:#}"));
             input.emit(ProcessingMsg::Rendered { generation, result });
         });
