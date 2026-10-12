@@ -128,13 +128,18 @@ impl SimpleComponent for Processing {
                         set_description: Some(tr("Здесь меняется скорость региона. Изменения сразу сохраняются и применяются при экспорте.", "Speed and cutting of a region. Changes are saved right away and applied on export.")),
                     },
 
-                    add_named[Some("edit")] = &gtk::ScrolledWindow {
-                      set_hscrollbar_policy: gtk::PolicyType::Never,
-                      #[wrap(Some)]
-                      set_child = &gtk::Box {
+                    add_named[Some("edit")] = &gtk::Box {
                         set_orientation: gtk::Orientation::Vertical,
-                        set_spacing: 18,
-                        set_margin_all: 24,
+
+                        // Title and Original / Result stay put while the
+                        // settings below scroll.
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Vertical,
+                            set_spacing: 10,
+                            set_margin_start: 24,
+                            set_margin_end: 24,
+                            set_margin_top: 18,
+                            set_margin_bottom: 12,
 
                         gtk::Box {
                             set_spacing: 10,
@@ -170,6 +175,43 @@ impl SimpleComponent for Processing {
                                 connect_clicked => ProcessingMsg::Redo,
                             },
                         },
+
+                        gtk::Box {
+                            set_spacing: 8,
+                            gtk::Button {
+                                #[watch]
+                                set_label: if model.playing == Some(Playing::Original) { tr("■ Оригинал", "■ Original") } else { tr("▶ Оригинал", "▶ Original") },
+                                #[watch]
+                                set_sensitive: model.player.is_some(),
+                                connect_clicked => ProcessingMsg::PlayOriginal,
+                            },
+                            gtk::Button {
+                                add_css_class: "suggested-action",
+                                #[watch]
+                                set_label: if model.playing == Some(Playing::Result) { tr("■ Результат", "■ Result") } else { tr("▶ Результат", "▶ Result") },
+                                #[watch]
+                                set_sensitive: model.player.is_some() && !model.busy,
+                                connect_clicked => ProcessingMsg::PlayResult,
+                            },
+                            gtk::Spinner {
+                                #[watch]
+                                set_spinning: model.busy,
+                                #[watch]
+                                set_visible: model.busy,
+                            },
+                        },
+                        },
+
+                        gtk::Separator {},
+
+                        gtk::ScrolledWindow {
+                            set_vexpand: true,
+                            set_hscrollbar_policy: gtk::PolicyType::Never,
+                            #[wrap(Some)]
+                            set_child = &gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_spacing: 18,
+                                set_margin_all: 24,
 
                         adw::PreferencesGroup {
                             set_title: tr("Скорость", "Speed"),
@@ -265,32 +307,8 @@ impl SimpleComponent for Processing {
                             #[watch]
                             set_label: &model.duration_label(),
                         },
-
-                        gtk::Box {
-                            set_spacing: 8,
-                            gtk::Button {
-                                #[watch]
-                                set_label: if model.playing == Some(Playing::Original) { tr("■ Оригинал", "■ Original") } else { tr("▶ Оригинал", "▶ Original") },
-                                #[watch]
-                                set_sensitive: model.player.is_some(),
-                                connect_clicked => ProcessingMsg::PlayOriginal,
-                            },
-                            gtk::Button {
-                                add_css_class: "suggested-action",
-                                #[watch]
-                                set_label: if model.playing == Some(Playing::Result) { tr("■ Результат", "■ Result") } else { tr("▶ Результат", "▶ Result") },
-                                #[watch]
-                                set_sensitive: model.player.is_some() && !model.busy,
-                                connect_clicked => ProcessingMsg::PlayResult,
-                            },
-                            gtk::Spinner {
-                                #[watch]
-                                set_spinning: model.busy,
-                                #[watch]
-                                set_visible: model.busy,
                             },
                         },
-                      },
                     },
 
                     #[watch]

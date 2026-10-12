@@ -294,25 +294,43 @@ class _ProcessingPageState extends State<ProcessingPage> {
                 Expanded(
                   child: r == null
                       ? Center(child: _hint())
-                      : ListView(
-                          children: [_settings(r), _effects(r), _parts(r)],
+                      : Column(
+                          children: [
+                            _previewBar(r),
+                            Expanded(
+                              child: ListView(
+                                children: [
+                                  _settings(r),
+                                  _effects(r),
+                                  _parts(r),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
                 ),
               ],
             )
-          : ListView(
+          : Column(
               children: [
-                if (r != null) ...[
-                  _settings(r),
-                  _effects(r),
-                  _parts(r),
-                  const Divider(height: 1),
-                ] else
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                    child: _hint(),
+                if (r != null) _previewBar(r),
+                Expanded(
+                  child: ListView(
+                    children: [
+                      if (r != null) ...[
+                        _settings(r),
+                        _effects(r),
+                        _parts(r),
+                        const Divider(height: 1),
+                      ] else
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                          child: _hint(),
+                        ),
+                      ..._list(),
+                    ],
                   ),
-                ..._list(),
+                ),
               ],
             ),
     );
@@ -420,42 +438,51 @@ class _ProcessingPageState extends State<ProcessingPage> {
             value: r.keepPitch,
             onChanged: (v) => _setSpeed(r, speed, v),
           ),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  icon: Icon(
-                    _preview == _Preview.original
-                        ? Icons.stop
-                        : Icons.play_arrow,
-                  ),
-                  label: Text(tr('Оригинал', 'Original')),
-                  onPressed: () => _play(r, result: false),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton.icon(
-                  icon: _preview == _Preview.rendering
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Icon(
-                          _preview == _Preview.result
-                              ? Icons.stop
-                              : Icons.play_arrow,
-                        ),
-                  label: Text(tr('Результат', 'Result')),
-                  onPressed: _preview == _Preview.rendering
-                      ? null
-                      : () => _play(r, result: true),
-                ),
-              ),
-            ],
-          ),
         ],
+      ),
+    );
+  }
+
+  /// Original / Result, pinned under the title so they stay at hand while
+  /// the settings scroll.
+  Widget _previewBar(api.ReviewRegion r) {
+    return Material(
+      elevation: 1,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+        child: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                icon: Icon(
+                  _preview == _Preview.original ? Icons.stop : Icons.play_arrow,
+                ),
+                label: Text(tr('Оригинал', 'Original')),
+                onPressed: () => _play(r, result: false),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: FilledButton.icon(
+                icon: _preview == _Preview.rendering
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(
+                        _preview == _Preview.result
+                            ? Icons.stop
+                            : Icons.play_arrow,
+                      ),
+                label: Text(tr('Результат', 'Result')),
+                onPressed: _preview == _Preview.rendering
+                    ? null
+                    : () => _play(r, result: true),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
