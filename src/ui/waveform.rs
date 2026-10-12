@@ -1135,6 +1135,7 @@ mod tests {
             channels: ChannelMode::AsSource,
             speed: 100,
             keep_pitch: false,
+            fx: Default::default(),
             parts: Vec::new(),
         };
         // 1 frame per px, so x == frame.

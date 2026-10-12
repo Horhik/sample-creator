@@ -17,7 +17,9 @@ use crate::audio::peaks::{self, PeakJob, Peaks};
 use crate::audio::player::Player;
 use crate::core::history::RegionHistory;
 use crate::core::parts::{output_to_source, part_fades, positions, spliced_len};
-use crate::core::{Id, PALETTE, Part, Region, SPEED_MAX, SPEED_MIN, SPEED_NORMAL};
+use crate::core::{
+    Fx, GAIN_MAX, GAIN_MIN, Id, PALETTE, Part, Region, SPEED_MAX, SPEED_MIN, SPEED_NORMAL,
+};
 use crate::export;
 use crate::lang::{sec, tr};
 use crate::store::{FileRow, Library};
@@ -53,6 +55,7 @@ pub struct Processing {
     parts_sender: Option<relm4::Sender<ProcessingMsg>>,
     speed_scale: gtk::Scale,
     keep_pitch: gtk::Switch,
+    fx: FxControls,
     /// Set while the controls are being filled from the model.
     updating: Rc<std::cell::Cell<bool>>,
     toasts: adw::ToastOverlay,
@@ -65,6 +68,8 @@ pub enum ProcessingMsg {
     Select(Option<Id>),
     Speed(u16),
     KeepPitch(bool),
+    /// Any of the volume and dynamics controls changed: all of them, as set.
+    Fx(Fx),
     /// Click on the waveform: where the next cut goes.
     Cursor(u64),
     Cut,
@@ -210,6 +215,15 @@ impl SimpleComponent for Processing {
                                     },
                                 },
                             },
+                        },
+
+                        adw::PreferencesGroup {
+                            set_title: tr("Громкость и динамика", "Volume and dynamics"),
+                            set_description: Some(tr(
+                                "По порядку: обрезка тишины, шумоподавление, компрессор, нормализация или громкость.",
+                                "In this order: trim silence, noise reduction, compressor, normalise or gain.",
+                            )),
+                            add: &model.fx.root,
                         },
 
                         adw::PreferencesGroup {
@@ -435,6 +449,7 @@ impl SimpleComponent for Processing {
             parts_sender: Some(sender.input_sender().clone()),
             speed_scale,
             keep_pitch: gtk::Switch::builder().valign(gtk::Align::Center).build(),
+            fx: FxControls::new(),
             updating: Rc::default(),
             toasts: root.clone(),
         };
@@ -462,6 +477,9 @@ impl SimpleComponent for Processing {
                 s.input(ProcessingMsg::KeepPitch(sw.is_active()));
             }
         });
+        model
+            .fx
+            .connect(sender.input_sender().clone(), model.updating.clone());
         let (s, updating) = (sender.clone(), model.updating.clone());
         model.list.connect_row_selected(move |_, row| {
             if !updating.get() {
@@ -517,6 +535,7 @@ impl SimpleComponent for Processing {
                 self.edit(|r| r.speed = speed);
             }
             ProcessingMsg::KeepPitch(keep) => self.edit(|r| r.keep_pitch = keep),
+            ProcessingMsg::Fx(fx) => self.edit_with(|r| r.fx = fx, false),
             ProcessingMsg::Cursor(at) => {
                 self.wave_state.borrow_mut().cursor = Some(at);
                 self.wave.queue_draw();
@@ -777,6 +796,7 @@ impl Processing {
         self.updating.set(true);
         self.speed_scale.set_value(f64::from(r.speed));
         self.keep_pitch.set_active(r.keep_pitch);
+        self.fx.set(&r.fx);
         self.updating.set(false);
         self.rebuild_parts();
     }
@@ -1043,6 +1063,146 @@ impl Processing {
             && let Some(p) = &self.player
         {
             p.pause();
+        }
+    }
+}
+
+/// The volume and dynamics controls of the selected region.
+#[derive(Clone)]
+struct FxControls {
+    root: gtk::Box,
+    gain: gtk::SpinButton,
+    normalize: gtk::Switch,
+    trim: gtk::Switch,
+    trim_db: gtk::SpinButton,
+    compress: gtk::SpinButton,
+    denoise: gtk::Switch,
+}
+
+impl FxControls {
+    fn new() -> Self {
+        let spin = |lo: f64, hi: f64, step: f64, digits: u32| {
+            let s = gtk::SpinButton::with_range(lo, hi, step);
+            s.set_digits(digits);
+            s.set_valign(gtk::Align::Center);
+            s
+        };
+        let switch = || gtk::Switch::builder().valign(gtk::Align::Center).build();
+        let c = FxControls {
+            root: gtk::Box::new(gtk::Orientation::Vertical, 8),
+            gain: spin(
+                f64::from(GAIN_MIN) / 10.0,
+                f64::from(GAIN_MAX) / 10.0,
+                0.5,
+                1,
+            ),
+            normalize: switch(),
+            trim: switch(),
+            trim_db: spin(-80.0, -10.0, 1.0, 0),
+            compress: spin(0.0, 100.0, 5.0, 0),
+            denoise: switch(),
+        };
+        c.trim_db.set_value(-45.0);
+        let row = |label: &str, hint: &str, widgets: &[&gtk::Widget]| {
+            let b = gtk::Box::builder().spacing(12).margin_top(2).build();
+            let text = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            text.set_hexpand(true);
+            text.append(&gtk::Label::builder().label(label).xalign(0.0).build());
+            text.append(
+                &gtk::Label::builder()
+                    .label(hint)
+                    .xalign(0.0)
+                    .wrap(true)
+                    .css_classes(["dim-label", "caption"])
+                    .build(),
+            );
+            b.append(&text);
+            for w in widgets {
+                b.append(*w);
+            }
+            b
+        };
+        c.root.append(&row(
+            tr("Громкость, дБ", "Gain, dB"),
+            tr(
+                "выше нуля — громче исходника",
+                "above zero is louder than the source",
+            ),
+            &[c.gain.upcast_ref()],
+        ));
+        c.root.append(&row(
+            tr("Нормализовать", "Normalise"),
+            tr(
+                "пик до −1 дБ; громкость тогда не учитывается",
+                "peak to −1 dB; the gain is not used then",
+            ),
+            &[c.normalize.upcast_ref()],
+        ));
+        c.root.append(&row(
+            tr("Обрезать тишину по краям", "Trim silence at the ends"),
+            tr("тише порога, дБ", "below the threshold, dB"),
+            &[c.trim_db.upcast_ref(), c.trim.upcast_ref()],
+        ));
+        c.root.append(&row(
+            tr("Компрессор, %", "Compressor, %"),
+            tr(
+                "0 — выключен; больше — ровнее громкость",
+                "0 is off; more evens out the level",
+            ),
+            &[c.compress.upcast_ref()],
+        ));
+        c.root.append(&row(
+            tr("Шумоподавление", "Noise reduction"),
+            tr(
+                "для речи; на музыке может звучать странно",
+                "for speech; may sound odd on music",
+            ),
+            &[c.denoise.upcast_ref()],
+        ));
+        c
+    }
+
+    fn read(&self) -> Fx {
+        Fx {
+            gain: (self.gain.value() * 10.0).round() as i16,
+            normalize: self.normalize.is_active(),
+            trim_db: self
+                .trim
+                .is_active()
+                .then(|| self.trim_db.value().round() as i16),
+            compress: self.compress.value().round() as u8,
+            denoise: self.denoise.is_active(),
+        }
+    }
+
+    fn set(&self, fx: &Fx) {
+        self.gain.set_value(f64::from(fx.gain) / 10.0);
+        self.gain.set_sensitive(!fx.normalize);
+        self.normalize.set_active(fx.normalize);
+        self.trim.set_active(fx.trim_db.is_some());
+        if let Some(db) = fx.trim_db {
+            self.trim_db.set_value(f64::from(db));
+        }
+        self.compress.set_value(f64::from(fx.compress));
+        self.denoise.set_active(fx.denoise);
+    }
+
+    /// Every change sends the whole set, unless the controls are being filled.
+    fn connect(&self, input: relm4::Sender<ProcessingMsg>, updating: Rc<std::cell::Cell<bool>>) {
+        let me = self.clone();
+        let send = Rc::new(move || {
+            if !updating.get() {
+                me.gain.set_sensitive(!me.normalize.is_active());
+                input.emit(ProcessingMsg::Fx(me.read()));
+            }
+        });
+        for spin in [&self.gain, &self.trim_db, &self.compress] {
+            let send = send.clone();
+            spin.connect_value_changed(move |_| send());
+        }
+        for sw in [&self.normalize, &self.trim, &self.denoise] {
+            let send = send.clone();
+            sw.connect_active_notify(move |_| send());
         }
     }
 }

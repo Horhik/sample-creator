@@ -7,7 +7,7 @@ use std::rc::Rc;
 use relm4::gtk::{self, gdk, glib, prelude::*};
 
 use super::waveform::{color_rgba, format_time};
-use crate::core::{ChannelMode, ColorIdx, Id, Item, Markup, PALETTE};
+use crate::core::{ChannelMode, ColorIdx, GAIN_MAX, GAIN_MIN, Id, Item, Markup, PALETTE};
 use crate::lang::{sec, tr};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,9 +17,24 @@ pub enum ListEvent {
     Color(Item, ColorIdx),
     Export(Id, bool),
     Channels(Id, ChannelMode),
+    /// Region volume in tenths of a dB.
+    Gain(Id, i16),
     Delete(Item),
     /// Editing finished (Enter / Escape): give focus back to the waveform.
     Done,
+}
+
+/// "+3.5 dB", "−2 dB", "0 dB".
+pub fn gain_label(tenths: i16) -> String {
+    let db = f32::from(tenths) / 10.0;
+    let unit = tr("дБ", "dB");
+    if tenths == 0 {
+        format!("0 {unit}")
+    } else if db.fract() == 0.0 {
+        format!("{:+} {unit}", db as i32)
+    } else {
+        format!("{db:+.1} {unit}")
+    }
 }
 
 fn channel_modes() -> [(ChannelMode, &'static str); 4] {
@@ -54,6 +69,41 @@ impl Default for MarkupList {
 }
 
 impl MarkupList {
+    /// The region's volume: a button with the current gain that opens a
+    /// slider. The library is written when the slider is put away.
+    fn gain_button(&self, id: Id, gain: i16) -> gtk::MenuButton {
+        let button = gtk::MenuButton::builder()
+            .label(gain_label(gain))
+            .tooltip_text(tr(
+                "Громкость региона: выше исходной — громче в разметке и при экспорте",
+                "Region volume: above the original it plays and exports louder",
+            ))
+            .css_classes(["flat"])
+            .build();
+        let scale = gtk::Scale::with_range(
+            gtk::Orientation::Horizontal,
+            f64::from(GAIN_MIN) / 10.0,
+            f64::from(GAIN_MAX) / 10.0,
+            0.5,
+        );
+        scale.set_value(f64::from(gain) / 10.0);
+        scale.set_width_request(260);
+        scale.set_draw_value(false);
+        scale.add_mark(0.0, gtk::PositionType::Bottom, Some("0"));
+        let b = button.clone();
+        scale.connect_value_changed(move |s| b.set_label(&gain_label(tenths(s.value()))));
+        let popover = gtk::Popover::builder().child(&scale).build();
+        let (this, s) = (self.clone(), scale.clone());
+        popover.connect_closed(move |_| {
+            let now = tenths(s.value());
+            if now != gain {
+                this.emit(ListEvent::Gain(id, now));
+            }
+        });
+        button.set_popover(Some(&popover));
+        button
+    }
+
     pub fn new() -> Self {
         let list = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::Single)
@@ -261,6 +311,7 @@ impl MarkupList {
         row_box.append(&time_label);
 
         if let Some(r) = region {
+            row_box.append(&self.gain_button(r.id, r.fx.gain));
             if channels == 2 {
                 let names: Vec<&str> = channel_modes().iter().map(|(_, n)| *n).collect();
                 let dropdown = gtk::DropDown::from_strings(&names);
@@ -400,4 +451,9 @@ pub fn color_swatch(idx: ColorIdx, size: i32) -> gtk::DrawingArea {
         cr.fill().ok();
     });
     area
+}
+
+/// Slider value in dB → tenths, on half-dB steps.
+fn tenths(db: f64) -> i16 {
+    ((db * 2.0).round() * 5.0) as i16
 }

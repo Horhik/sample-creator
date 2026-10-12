@@ -25,6 +25,11 @@ const ATTRIBUTES: &str = "standard::name,standard::display-name,standard::type,\
 pub struct FileTree {
     root: PathBuf,
     badges: Badges,
+    /// A file to select once the view has caught up with the root.
+    reveal: RefCell<Option<PathBuf>>,
+    /// Set while selecting a file the editor already has open, so the
+    /// selection does not open it again.
+    revealing: Rc<std::cell::Cell<bool>>,
 }
 
 #[derive(Debug)]
@@ -32,6 +37,8 @@ pub enum FileTreeInput {
     SetRoot(PathBuf),
     /// Markup of this file changed: update its badge.
     Refresh(PathBuf),
+    /// Highlight the open file: expand its folders and select its row.
+    Reveal(PathBuf),
 }
 
 /// Name and badge label of a bound row.
@@ -151,7 +158,8 @@ impl SimpleComponent for FileTree {
             }
         });
 
-        set_tree_root(&list_view, &root_dir, &sender);
+        let revealing = Rc::new(std::cell::Cell::new(false));
+        set_tree_root(&list_view, &root_dir, &sender, revealing.clone());
         let widgets = FileTreeWidgets {
             list_view,
             shown_root: root_dir.clone(),
@@ -161,6 +169,8 @@ impl SimpleComponent for FileTree {
             model: FileTree {
                 root: root_dir,
                 badges,
+                reveal: RefCell::new(None),
+                revealing,
             },
             widgets,
         }
@@ -170,18 +180,85 @@ impl SimpleComponent for FileTree {
         match msg {
             FileTreeInput::SetRoot(dir) => self.root = dir,
             FileTreeInput::Refresh(path) => self.badges.refresh(&path),
+            FileTreeInput::Reveal(path) => *self.reveal.borrow_mut() = Some(path),
         }
     }
 
     fn update_view(&self, widgets: &mut Self::Widgets, sender: ComponentSender<Self>) {
         if widgets.shown_root != self.root {
-            set_tree_root(&widgets.list_view, &self.root, &sender);
+            set_tree_root(
+                &widgets.list_view,
+                &self.root,
+                &sender,
+                self.revealing.clone(),
+            );
             widgets.shown_root = self.root.clone();
+        }
+        // Taken once: later updates must not scroll the tree back to it.
+        if let Some(path) = self.reveal.borrow_mut().take()
+            && path.starts_with(&self.root)
+        {
+            reveal(&widgets.list_view, path, self.revealing.clone());
         }
     }
 }
 
-fn set_tree_root(list_view: &gtk::ListView, dir: &Path, sender: &ComponentSender<FileTree>) {
+/// Expands the folders on the way to `path` and selects its row. Folders
+/// load asynchronously, so this keeps looking for a couple of seconds.
+fn reveal(list_view: &gtk::ListView, path: PathBuf, revealing: Rc<std::cell::Cell<bool>>) {
+    let view = list_view.clone();
+    let mut tries = 0;
+    let step = move || -> bool {
+        let Some(selection) = view.model().and_downcast::<gtk::SingleSelection>() else {
+            return true;
+        };
+        for i in 0..selection.n_items() {
+            let Some(row) = selection.item(i).and_downcast::<gtk::TreeListRow>() else {
+                continue;
+            };
+            let Some(p) = row
+                .item()
+                .and_downcast::<gio::FileInfo>()
+                .and_then(|info| file_of(&info))
+                .and_then(|f| f.path())
+            else {
+                continue;
+            };
+            if p == path {
+                if selection.selected() != i {
+                    revealing.set(true);
+                    selection.set_selected(i);
+                    revealing.set(false);
+                }
+                view.scroll_to(i, gtk::ListScrollFlags::NONE, None);
+                return true;
+            }
+            if path.starts_with(&p) && row.is_expandable() && !row.is_expanded() {
+                row.set_expanded(true);
+            }
+        }
+        false
+    };
+    let step = Rc::new(RefCell::new(step));
+    if (step.borrow_mut())() {
+        return;
+    }
+    glib::timeout_add_local(std::time::Duration::from_millis(60), move || {
+        tries += 1;
+        if (step.borrow_mut())() || tries > 40 {
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
+    });
+}
+
+fn set_tree_root(
+    list_view: &gtk::ListView,
+    dir: &Path,
+    sender: &ComponentSender<FileTree>,
+    revealing: Rc<std::cell::Cell<bool>>,
+) {
     let tree = gtk::TreeListModel::new(
         directory_model(&gio::File::for_path(dir)),
         false,
@@ -203,6 +280,9 @@ fn set_tree_root(list_view: &gtk::ListView, dir: &Path, sender: &ComponentSender
 
     let sender = sender.clone();
     selection.connect_selected_item_notify(move |selection| {
+        if revealing.get() {
+            return;
+        }
         let info = selection
             .selected_item()
             .and_downcast::<gtk::TreeListRow>()

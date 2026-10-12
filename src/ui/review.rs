@@ -18,7 +18,7 @@ use super::waveform::{color_rgba, envelope, fill_envelope, format_time};
 use crate::audio::peaks::{self, PeakJob};
 use crate::audio::player::Player;
 use crate::core::history::Store;
-use crate::core::{ChannelMode, ColorIdx, Id, PALETTE, Region};
+use crate::core::{ChannelMode, ColorIdx, Id, PALETTE, Region, fx_notes};
 use crate::export::{self, OutputFormat, Source};
 use crate::lang::{is_russian, sec, tr};
 use crate::store::{FileRow, Library};
@@ -848,6 +848,7 @@ fn speed_note(r: &Region, rate: f64) -> String {
     if r.is_edited() {
         notes.push(tr("склейка", "spliced").into());
     }
+    notes.extend(fx_notes(&r.fx));
     format!(
         " → {:.2} {} ({})",
         r.output_len() as f64 / rate,

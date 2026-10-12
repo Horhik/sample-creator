@@ -353,6 +353,7 @@ impl SimpleComponent for App {
         });
         model.sync_root(&sender);
         if let Some(path) = open_file {
+            model.file_tree.emit(FileTreeInput::Reveal(path.clone()));
             model.editor.emit(EditorMsg::Open(path));
         }
 
@@ -451,6 +452,7 @@ impl SimpleComponent for App {
             }
             AppMsg::FileChanged(path) => self.file_tree.emit(FileTreeInput::Refresh(path)),
             AppMsg::OpenRegion(path, id) => {
+                self.file_tree.emit(FileTreeInput::Reveal(path.clone()));
                 self.view_stack.set_visible_child_name("markup");
                 self.editor.emit(EditorMsg::OpenAt(path, Item::Region(id)));
             }

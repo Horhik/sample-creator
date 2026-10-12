@@ -769,6 +769,7 @@ impl Editor {
             }
             ListEvent::Export(id, export) => self.edit_region(id, |r| r.export = export),
             ListEvent::Channels(id, mode) => self.edit_region(id, |r| r.channels = mode),
+            ListEvent::Gain(id, gain) => self.edit_region(id, |r| r.fx.gain = gain),
             ListEvent::Delete(item) => self.delete(item),
             ListEvent::Done => {
                 self.waveform.focus();
@@ -873,6 +874,7 @@ impl Editor {
             channels: ChannelMode::AsSource,
             speed: 100,
             keep_pitch: false,
+            fx: Default::default(),
             parts: Vec::new(),
         };
         let created = self.commit(vec![Change::add_region(region)]);
@@ -963,6 +965,14 @@ impl Editor {
     /// Sends the loop range to the player when it changed. Called after every
     /// message, so selection, region edits, undo and deletes all stay in sync.
     fn apply_loop(&self) {
+        // A selected region that was made louder is heard louder.
+        if let Some(p) = self.player() {
+            let gain = match self.selection {
+                None => self.selected_region().map_or(1.0, |r| r.fx.gain_factor()),
+                Some(_) => 1.0,
+            };
+            p.set_gain(gain);
+        }
         let range = self.loop_range();
         if range == self.applied_loop.get() {
             return;
