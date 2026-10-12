@@ -1,6 +1,6 @@
 [package]
 name = "sample-creator"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Mark up audio recordings and cut them into samples (GTK4)"
 license = "MIT"
