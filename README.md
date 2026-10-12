@@ -9,7 +9,7 @@
   Linux (GTK4 / libadwaita) и Android.
 </p>
 
-<p align="center"><i>Mark up audio recordings and cut them into samples. Linux and Android. UI in Russian.</i></p>
+<p align="center"><i>Mark up audio recordings and cut them into samples. Linux and Android. English and Russian UI.</i></p>
 
 ---
 
@@ -22,23 +22,7 @@
 Для разбора большого количества аудиофайлов: WAV/BWF (16/24/32 int, 32 float),
 MP3 и FLAC. Записи на несколько часов — норма: всё читается потоково.
 
-<p align="center">
-  <img src="docs/screenshots/desktop-editor.jpg" width="90%" alt="Десктоп: разметка">
-</p>
-<p align="center">
-  <img src="docs/screenshots/desktop-review.jpg" width="44%" alt="Десктоп: обзор регионов">
-  <img src="docs/screenshots/desktop-processing.jpg" width="44%" alt="Десктоп: обработка и нарезка">
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/editor.png" width="24%" alt="Разметка">
-  <img src="docs/screenshots/review.png" width="24%" alt="Обзор регионов">
-  <img src="docs/screenshots/processing.png" width="24%" alt="Обработка">
-  <img src="docs/screenshots/parts.png" width="24%" alt="Нарезка">
-</p>
-<p align="center">
-  <img src="docs/screenshots/landscape.png" width="72%" alt="Горизонтальный режим">
-</p>
+Скриншоты десктопа и телефона — в [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md).
 
 ## Возможности
 
@@ -58,6 +42,8 @@ MP3 и FLAC. Записи на несколько часов — норма: в�
 - **Десктоп:** работа с клавиатуры (`?` — все клавиши), меню по правой кнопке.
 - **Телефон:** жесты, горизонтальный режим, тема и цвета Material You,
   рекордер по USB OTG.
+- **Русский и английский** интерфейс: по умолчанию как в системе, можно
+  выбрать в настройках.
 
 ## Установка
 
