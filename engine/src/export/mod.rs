@@ -1,6 +1,7 @@
 //! Turning planned regions into files. No GTK: [`plan`] decides names and
 //! channel layout, [`render`] streams one region from its source into WAVs.
 
+pub mod cache;
 pub mod wav;
 
 use std::collections::HashSet;
