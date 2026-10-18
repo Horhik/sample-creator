@@ -6,7 +6,9 @@ import 'package:flutter/services.dart';
 
 import 'item_sheet.dart';
 import 'browser.dart';
+import 'display.dart';
 import 'listening.dart';
+import 'markup_rail.dart';
 import 'remote_ui.dart';
 import 'src/rust/api/remote.dart' as remote_api;
 import 'src/rust/api/engine.dart' as engine;
@@ -95,6 +97,12 @@ class _EditorPageState extends State<EditorPage>
     markupChanged.addListener(_onSynced);
     volumesChanged.addListener(_onVolumes);
     waveDetailed.addListener(_onWaveStyle);
+    fullscreen.addListener(_onWaveStyle);
+    markupRail
+      ..files = (() => _scaffold.currentState?.openDrawer())
+      ..toggleList = (() => setState(() => _listOpen = !_listOpen))
+      ..undo = (() => _run(() => engine.undo()))
+      ..redo = (() => _run(() => engine.redo()));
     _load();
   }
 
@@ -214,6 +222,8 @@ class _EditorPageState extends State<EditorPage>
     markupChanged.removeListener(_onSynced);
     volumesChanged.removeListener(_onVolumes);
     waveDetailed.removeListener(_onWaveStyle);
+    fullscreen.removeListener(_onWaveStyle);
+    markupRail.update(shown: false);
     _ticker.dispose();
     super.dispose();
   }
@@ -826,59 +836,53 @@ class _EditorPageState extends State<EditorPage>
     final shown = _shownMarkup();
     final landscape =
         MediaQuery.orientationOf(context) == Orientation.landscape;
+    // Full screen, landscape: no title bar, its buttons are in the rail and
+    // the title heads the list panel.
+    final bare = landscape && fullscreen.value;
+    markupRail.update(
+      shown: bare,
+      canUndo: markup.canUndo,
+      canRedo: markup.canRedo,
+      listOpen: _listOpen,
+    );
 
     return Scaffold(
       key: _scaffold,
       drawer: _drawer(),
-      appBar: AppBar(
-        toolbarHeight: landscape ? 48 : null,
-        title: GestureDetector(
-          onTap: _renameFile,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(info.title, overflow: TextOverflow.ellipsis),
-              Text(
-                [
-                  '${info.sampleRate ~/ 1000} kHz',
-                  info.encoding,
-                  info.channels == 1
-                      ? tr('моно', 'mono')
-                      : tr('стерео', 'stereo'),
-                  formatTime(info.totalFrames / info.sampleRate, millis: false),
-                  if (info.recordedAt != null) info.recordedAt!,
-                ].join(' · '),
-                style: Theme.of(context).textTheme.bodySmall,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          IconButton(
-            tooltip: tr('Отменить', 'Undo'),
-            icon: const Icon(Icons.undo),
-            onPressed: markup.canUndo ? () => _run(() => engine.undo()) : null,
-          ),
-          IconButton(
-            tooltip: tr('Повторить', 'Redo'),
-            icon: const Icon(Icons.redo),
-            onPressed: markup.canRedo ? () => _run(() => engine.redo()) : null,
-          ),
-          if (landscape)
-            IconButton(
-              tooltip: _listOpen
-                  ? tr('Скрыть список', 'Hide the list')
-                  : tr('Маркеры и регионы', 'Markers and regions'),
-              isSelected: _listOpen,
-              icon: const Icon(Icons.view_sidebar_outlined),
-              selectedIcon: const Icon(Icons.view_sidebar),
-              onPressed: () => setState(() => _listOpen = !_listOpen),
+      appBar: bare
+          ? null
+          : AppBar(
+              toolbarHeight: landscape ? 48 : null,
+              title: _title(info),
+              actions: [
+                IconButton(
+                  tooltip: tr('Отменить', 'Undo'),
+                  icon: const Icon(Icons.undo),
+                  onPressed: markup.canUndo
+                      ? () => _run(() => engine.undo())
+                      : null,
+                ),
+                IconButton(
+                  tooltip: tr('Повторить', 'Redo'),
+                  icon: const Icon(Icons.redo),
+                  onPressed: markup.canRedo
+                      ? () => _run(() => engine.redo())
+                      : null,
+                ),
+                if (landscape)
+                  IconButton(
+                    tooltip: _listOpen
+                        ? tr('Скрыть список', 'Hide the list')
+                        : tr('Маркеры и регионы', 'Markers and regions'),
+                    isSelected: _listOpen,
+                    icon: const Icon(Icons.view_sidebar_outlined),
+                    selectedIcon: const Icon(Icons.view_sidebar),
+                    onPressed: () => setState(() => _listOpen = !_listOpen),
+                  ),
+              ],
             ),
-        ],
-      ),
       body: landscape
-          ? _landscape(info, markup, shown, accent)
+          ? _landscape(info, markup, shown, accent, bare: bare)
           : Column(
               children: [
                 SizedBox(height: 44, child: _overview(info, shown)),
@@ -901,8 +905,9 @@ class _EditorPageState extends State<EditorPage>
     engine.FileInfo info,
     engine.MarkupView markup,
     engine.MarkupView shown,
-    Color accent,
-  ) {
+    Color accent, {
+    bool bare = false,
+  }) {
     final width = MediaQuery.sizeOf(context).width;
     return Row(
       children: [
@@ -939,9 +944,54 @@ class _EditorPageState extends State<EditorPage>
         ),
         if (_listOpen) ...[
           const VerticalDivider(width: 1),
-          SizedBox(width: math.min(340, width * 0.34), child: _list(markup)),
+          SizedBox(
+            width: math.min(340, width * 0.34),
+            child: bare
+                ? SafeArea(
+                    left: false,
+                    child: Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+                          child: _title(info, panel: true),
+                        ),
+                        const Divider(height: 1),
+                        Expanded(child: _list(markup)),
+                      ],
+                    ),
+                  )
+                : _list(markup),
+          ),
         ],
       ],
+    );
+  }
+
+  /// The recording's name (tap to rename) and its format.
+  Widget _title(engine.FileInfo info, {bool panel = false}) {
+    return GestureDetector(
+      onTap: _renameFile,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            info.title,
+            overflow: TextOverflow.ellipsis,
+            style: panel ? Theme.of(context).textTheme.titleMedium : null,
+          ),
+          Text(
+            [
+              '${info.sampleRate ~/ 1000} kHz',
+              info.encoding,
+              info.channels == 1 ? tr('моно', 'mono') : tr('стерео', 'stereo'),
+              formatTime(info.totalFrames / info.sampleRate, millis: false),
+              if (info.recordedAt != null) info.recordedAt!,
+            ].join(' · '),
+            style: Theme.of(context).textTheme.bodySmall,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
     );
   }
 
@@ -1050,6 +1100,7 @@ class _EditorPageState extends State<EditorPage>
   }
 
   Widget _bare(Widget body) {
+    markupRail.update(shown: false);
     return Scaffold(
       key: _scaffold,
       drawer: _drawer(),

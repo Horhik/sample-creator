@@ -13,6 +13,10 @@
   panel): every pixel is drawn on its own without smoothing, and at deep zoom
   the waveform is built from the samples themselves, down to one sample per
   pixel. The current smooth waveform stays the default.
+- Phone, full screen, landscape: markup has no top bar any more, the wave
+  takes the whole height. Files, markers and regions, undo and redo moved to
+  the top of the left rail above the tabs, and the recording's name to the
+  head of the right panel.
 - The file list opens with the current recording in the middle, not at the
   top of the folder.
 - Sound no longer stops after the output device changes (Bluetooth

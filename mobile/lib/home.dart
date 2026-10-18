@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'editor.dart';
@@ -6,6 +8,7 @@ import 'review.dart';
 import 'src/rust/api/review.dart' as review_api;
 import 'display.dart';
 import 'listening.dart';
+import 'markup_rail.dart';
 import 'remote_ui.dart';
 import 'sync_ui.dart';
 import 'waveform.dart' show loadWaveStyle;
@@ -99,17 +102,33 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
           children: [
             SafeArea(
               right: false,
-              child: NavigationRail(
-                selectedIndex: _page,
-                onDestinationSelected: _switch,
-                labelType: NavigationRailLabelType.none,
-                destinations: [
-                  for (final (icon, label) in _destinations)
-                    NavigationRailDestination(
-                      icon: Tooltip(message: label, child: Icon(icon)),
-                      label: Text(label),
+              // Scrolls when the markup buttons do not leave room for the tabs.
+              child: LayoutBuilder(
+                builder: (context, c) => SingleChildScrollView(
+                  child: ListenableBuilder(
+                    listenable: markupRail,
+                    builder: (context, rail) => SizedBox(
+                      // Room for the markup buttons above the tabs.
+                      height: _page == 0 && markupRail.shown
+                          ? math.max(c.maxHeight, 400)
+                          : c.maxHeight,
+                      child: rail,
                     ),
-                ],
+                    child: NavigationRail(
+                      selectedIndex: _page,
+                      onDestinationSelected: _switch,
+                      labelType: NavigationRailLabelType.none,
+                      leading: _page == 0 ? const MarkupRailButtons() : null,
+                      destinations: [
+                        for (final (icon, label) in _destinations)
+                          NavigationRailDestination(
+                            icon: Tooltip(message: label, child: Icon(icon)),
+                            label: Text(label),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
             ),
             const VerticalDivider(width: 1),
