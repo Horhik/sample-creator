@@ -74,6 +74,8 @@ pub enum EditorMsg {
     Nudge(f64),
     /// Detailed (true) or smooth waveform; a setting.
     WaveDetailed(bool),
+    /// Waveform height in decibels (true) or linear; a setting.
+    WaveDecibels(bool),
     /// Listening volume in dB, for everything played (not exported).
     ListeningDb(f64),
     ZoomIn,
@@ -360,6 +362,7 @@ impl SimpleComponent for Editor {
     ) -> ComponentParts<Self> {
         let waveform = Waveform::new();
         waveform.set_detailed(library.setting("waveform").as_deref() == Some("detailed"));
+        waveform.set_decibels(library.setting("wave_scale").as_deref() == Some("db"));
         let s = sender.input_sender().clone();
         waveform.connect_event(move |e| s.emit(EditorMsg::Wave(e)));
         let list = MarkupList::new();
@@ -452,6 +455,10 @@ impl SimpleComponent for Editor {
             }
             EditorMsg::WaveDetailed(on) => {
                 self.waveform.set_detailed(on);
+                false
+            }
+            EditorMsg::WaveDecibels(on) => {
+                self.waveform.set_decibels(on);
                 false
             }
             EditorMsg::ListeningDb(db) => {

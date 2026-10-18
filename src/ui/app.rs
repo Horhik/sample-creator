@@ -62,6 +62,8 @@ pub enum AppMsg {
     Language(u32),
     /// 0 = smooth waveform, 1 = detailed.
     WaveStyle(u32),
+    /// 0 = linear height, 1 = decibels.
+    WaveScale(u32),
     /// Open this folder to another Sample Creator (phone) over iroh.
     Share(PathBuf),
     ShareReady(SharedFolder),
@@ -160,10 +162,19 @@ impl SimpleComponent for App {
                                         model.library.setting("waveform").as_deref() == Some("detailed"),
                                     ),
                                 },
+                                #[name = "wave_scale"]
+                                gtk::DropDown::from_strings(&[
+                                    tr("Высота линейная", "Linear height"),
+                                    tr("Высота в децибелах", "Height in decibels"),
+                                ]) {
+                                    set_selected: u32::from(
+                                        model.library.setting("wave_scale").as_deref() == Some("db"),
+                                    ),
+                                },
                                 gtk::Label {
                                     set_label: tr(
-                                        "Подробная: каждый пиксель отдельно, при сильном зуме — сами сэмплы",
-                                        "Detailed: every pixel on its own, the samples themselves at deep zoom",
+                                        "Подробная: каждый пиксель отдельно, при сильном зуме — сами сэмплы. В децибелах: тихие звуки видны, край — −60 дБ",
+                                        "Detailed: every pixel on its own, the samples themselves at deep zoom. Decibels: quiet sounds show, down to −60 dB",
                                     ),
                                     add_css_class: "dim-label",
                                     add_css_class: "caption",
@@ -405,6 +416,11 @@ impl SimpleComponent for App {
             s.input(AppMsg::WaveStyle(d.selected()));
             popover.popdown();
         });
+        let (s, popover) = (sender.clone(), widgets.settings_popover.clone());
+        widgets.wave_scale.connect_selected_notify(move |d| {
+            s.input(AppMsg::WaveScale(d.selected()));
+            popover.popdown();
+        });
         // Closing the window writes the markup out to volumes that keep it.
         let lib = model.library.clone();
         window.connect_close_request(move |_| {
@@ -478,6 +494,16 @@ impl SimpleComponent for App {
             AppMsg::SyncNow => {
                 let result = sync::sync_target(&self.library, &self.root);
                 self.after_sync(result, &sender);
+            }
+            AppMsg::WaveScale(i) => {
+                let db = i == 1;
+                if let Err(err) = self
+                    .library
+                    .set_setting("wave_scale", if db { "db" } else { "linear" })
+                {
+                    eprintln!("wave scale: {err:#}");
+                }
+                self.editor.emit(EditorMsg::WaveDecibels(db));
             }
             AppMsg::WaveStyle(i) => {
                 let detailed = i == 1;

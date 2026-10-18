@@ -11,7 +11,13 @@ import 'remote_ui.dart';
 import 'src/rust/api/remote.dart' as remote_api;
 import 'sync_ui.dart';
 import 'l10n.dart';
-import 'waveform.dart' show friendlyError, setWaveDetailed, waveDetailed;
+import 'waveform.dart'
+    show
+        friendlyError,
+        setWaveDecibels,
+        setWaveDetailed,
+        waveDecibels,
+        waveDetailed;
 
 const _storage = MethodChannel('sample_creator/storage');
 
@@ -462,6 +468,21 @@ class FileBrowserState extends State<FileBrowser> {
               ),
               value: on,
               onChanged: setWaveDetailed,
+            ),
+          ),
+          ValueListenableBuilder(
+            valueListenable: waveDecibels,
+            builder: (context, on, _) => SwitchListTile(
+              secondary: const Icon(Icons.equalizer),
+              title: Text(tr('Волна в децибелах', 'Waveform in decibels')),
+              subtitle: Text(
+                tr(
+                  'Тихие звуки видны: высота по громкости в дБ, край — −60 дБ',
+                  'Quiet sounds show: height by loudness in dB, down to −60 dB',
+                ),
+              ),
+              value: on,
+              onChanged: setWaveDecibels,
             ),
           ),
           ValueListenableBuilder(

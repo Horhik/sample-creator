@@ -23,6 +23,21 @@ pub const COARSE: u64 = FINE * 64;
 /// waveform stays smooth and fills the view. Deeper would only stretch bins.
 pub const MIN_FRAMES_PER_PX: f64 = FINE as f64 / 4.0;
 
+/// Bottom of the waveform's decibel scale: quieter is drawn as silence.
+pub const DB_FLOOR: f32 = -60.0;
+
+/// A sample value placed on the decibel scale, sign kept: 0 dB is the full
+/// height, [`DB_FLOOR`] the middle line. Quiet takes stay readable, and a
+/// sound that is loud only next to an even quieter one still stands out.
+pub fn db_scale(x: f32) -> f32 {
+    let a = x.abs();
+    if a <= 0.0 {
+        return 0.0;
+    }
+    let db = 20.0 * a.log10();
+    (1.0 - db / DB_FLOOR).clamp(0.0, 1.0).copysign(x)
+}
+
 const CACHE_MAGIC: &[u8; 8] = b"SCPEAK01";
 
 /// One bin of one channel, quantised to i16.
@@ -287,6 +302,15 @@ fn save_cache(cache: &Path, peaks: &Peaks) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn decibel_scale() {
+        assert_eq!(db_scale(1.0), 1.0);
+        assert_eq!(db_scale(-1.0), -1.0);
+        assert_eq!(db_scale(0.0), 0.0);
+        assert!((db_scale(0.01) - 1.0 / 3.0).abs() < 1e-5); // -40 dB
+        assert_eq!(db_scale(0.0001), 0.0); // -80 dB
+    }
+
     use super::*;
     use crate::audio::bwf::tests::recorder_like;
 

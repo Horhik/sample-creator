@@ -13,6 +13,9 @@
   panel): every pixel is drawn on its own without smoothing, and at deep zoom
   the waveform is built from the samples themselves, down to one sample per
   pixel. The current smooth waveform stays the default.
+- A "Waveform in decibels" setting (next to "Detailed waveform"): the height
+  follows loudness in dB, from −60 dB to 0. Quiet takes, and quiet sounds
+  next to an even quieter background, become visible.
 - Phone, full screen, landscape: markup has no top bar any more, the wave
   takes the whole height. Files, markers and regions, undo and redo moved to
   the top of the left rail above the tabs, and the recording's name to the

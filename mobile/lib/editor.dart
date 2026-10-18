@@ -97,6 +97,7 @@ class _EditorPageState extends State<EditorPage>
     markupChanged.addListener(_onSynced);
     volumesChanged.addListener(_onVolumes);
     waveDetailed.addListener(_onWaveStyle);
+    waveDecibels.addListener(_onWaveStyle);
     fullscreen.addListener(_onWaveStyle);
     markupRail
       ..files = (() => _scaffold.currentState?.openDrawer())
@@ -222,6 +223,7 @@ class _EditorPageState extends State<EditorPage>
     markupChanged.removeListener(_onSynced);
     volumesChanged.removeListener(_onVolumes);
     waveDetailed.removeListener(_onWaveStyle);
+    waveDecibels.removeListener(_onWaveStyle);
     fullscreen.removeListener(_onWaveStyle);
     markupRail.update(shown: false);
     _ticker.dispose();

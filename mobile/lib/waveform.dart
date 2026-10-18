@@ -154,7 +154,7 @@ class WavePainter extends CustomPainter {
           Paint()..color = scheme.outlineVariant,
         );
       }
-      final (lo, hi) = waveColumnsOf(peaks, channels, channel: ch);
+      final (lo, hi) = shownColumnsOf(peaks, channels, channel: ch);
       fillEnvelope(
         canvas,
         lo: lo,
@@ -291,7 +291,7 @@ class OverviewPainter extends CustomPainter {
     }
 
     final columns = peaks.data.length ~/ (channels * 2);
-    final (lo, hi) = waveColumnsOf(peaks, channels);
+    final (lo, hi) = shownColumnsOf(peaks, channels);
     fillEnvelope(
       canvas,
       lo: lo,
@@ -415,8 +415,41 @@ String regionNote(review.ReviewRegion r) {
 /// down to single samples, instead of smooth curves through the summary.
 final waveDetailed = ValueNotifier<bool>(false);
 
+/// Waveform height on the decibel scale (a setting): quiet sounds show.
+final waveDecibels = ValueNotifier<bool>(false);
+
 void loadWaveStyle() {
   waveDetailed.value = review.getSetting(key: 'mobile.waveform') == 'detailed';
+  waveDecibels.value = review.getSetting(key: 'mobile.wave_scale') == 'db';
+}
+
+void setWaveDecibels(bool on) {
+  waveDecibels.value = on;
+  review.setSetting(key: 'mobile.wave_scale', value: on ? 'db' : 'linear');
+}
+
+/// Bottom of the decibel scale (mirrors `peaks::DB_FLOOR`).
+const dbFloor = -60.0;
+
+/// A sample value on the decibel scale, sign kept (mirrors `peaks::db_scale`):
+/// 0 dB is the full height, [dbFloor] the middle line.
+double dbScale(double x) {
+  final a = x.abs();
+  if (a <= 0) return 0;
+  final db = 20 * math.log(a) / math.ln10;
+  final y = (1 - db / dbFloor).clamp(0.0, 1.0).toDouble();
+  return x < 0 ? -y : y;
+}
+
+/// [waveColumnsOf] on the scale the setting asks for.
+(List<double>, List<double>) shownColumnsOf(
+  engine.PeaksView peaks,
+  int channels, {
+  int? channel,
+}) {
+  final (lo, hi) = waveColumnsOf(peaks, channels, channel: channel);
+  if (!waveDecibels.value) return (lo, hi);
+  return (lo.map(dbScale).toList(), hi.map(dbScale).toList());
 }
 
 void setWaveDetailed(bool on) {

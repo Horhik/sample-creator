@@ -107,6 +107,8 @@ struct State {
     /// Detailed waveform: a column per pixel, straight edges, zoom down to
     /// single samples. Otherwise smooth curves through the summary.
     detailed: bool,
+    /// Height on the decibel scale ([`peaks_mod::db_scale`]), not linear.
+    decibels: bool,
     drawn_detail: u64,
     sample_rate: u32,
     total_frames: u64,
@@ -303,6 +305,12 @@ impl Waveform {
             s.frames_per_px = f64::MAX;
             s.clamp_view();
         }
+        self.redraw();
+    }
+
+    /// Height in decibels or linear (a setting).
+    pub fn set_decibels(&self, decibels: bool) {
+        self.state.borrow_mut().decibels = decibels;
         self.redraw();
     }
 
@@ -830,10 +838,10 @@ fn draw_main(
         set_color(cr, &pal.fg, 0.75);
         if s.detailed {
             let points = columns(&reader, detail.as_ref(), ch, s.view_start, s.frames_per_px, w);
-            fill_columns(cr, &points, mid, half)?;
+            fill_columns(cr, &scaled(points, s.decibels), mid, half)?;
         } else {
             let points = envelope(&reader, ch..ch + 1, s.view_start, s.frames_per_px, w);
-            fill_envelope(cr, &points, mid, half)?;
+            fill_envelope(cr, &scaled(points, s.decibels), mid, half)?;
         }
     }
     drop(detail);
@@ -1034,7 +1042,7 @@ fn draw_overview(
     let reader = peaks.read();
     set_color(cr, &pal.fg, 0.45);
     let points = envelope(&reader, 0..peaks.channels, 0.0, per_px, w);
-    fill_envelope(cr, &points, mid, mid - 2.0)?;
+    fill_envelope(cr, &scaled(points, s.decibels), mid, mid - 2.0)?;
     drop(reader);
 
     for m in &s.markup.markers {
@@ -1112,6 +1120,17 @@ pub(crate) fn envelope(
         x += step;
     }
     out
+}
+
+/// Columns on the decibel scale when `decibels`, else as they are.
+fn scaled(mut points: Vec<(f64, f32, f32)>, decibels: bool) -> Vec<(f64, f32, f32)> {
+    if decibels {
+        for p in &mut points {
+            p.1 = peaks_mod::db_scale(p.1);
+            p.2 = peaks_mod::db_scale(p.2);
+        }
+    }
+    points
 }
 
 /// Min/max of `channel` for every pixel across `[0, w)` from frame `start`:
