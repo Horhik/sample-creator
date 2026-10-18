@@ -115,8 +115,8 @@ class WavePainter extends CustomPainter {
           ..strokeWidth = 3;
         canvas.drawLine(Offset(x0, top), Offset(x0, size.height), edge);
         canvas.drawLine(Offset(x1, top), Offset(x1, size.height), edge);
-        _handle(canvas, x0, size.height, c);
-        _handle(canvas, x1, size.height, c);
+        _handle(canvas, x0, top, c);
+        _handle(canvas, x1, top, c);
       }
     }
 
@@ -133,8 +133,8 @@ class WavePainter extends CustomPainter {
         ..strokeWidth = 2;
       canvas.drawLine(Offset(x0, top), Offset(x0, size.height), edge);
       canvas.drawLine(Offset(x1, top), Offset(x1, size.height), edge);
-      _handle(canvas, x0, size.height, accent);
-      _handle(canvas, x1, size.height, accent);
+      _handle(canvas, x0, top, accent);
+      _handle(canvas, x1, top, accent);
     }
 
     // Wave.
@@ -206,10 +206,12 @@ class WavePainter extends CustomPainter {
     }
   }
 
-  void _handle(Canvas canvas, double x, double bottom, Color c) {
+  /// Grip at the top of an edge, under the name plate: the floating
+  /// controls cover the bottom of the wave.
+  void _handle(Canvas canvas, double x, double top, Color c) {
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromCenter(center: Offset(x, bottom - 18), width: 14, height: 30),
+        Rect.fromCenter(center: Offset(x, top + 18), width: 14, height: 30),
         const Radius.circular(7),
       ),
       Paint()..color = c,

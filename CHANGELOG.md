@@ -20,6 +20,8 @@
   takes the whole height. Files, markers and regions, undo and redo moved to
   the top of the left rail above the tabs, and the recording's name to the
   head of the right panel.
+- Phone: the grips on the edges of a selection or region are at the top of
+  the wave now, so the floating controls no longer cover them.
 - The file list opens with the current recording in the middle, not at the
   top of the folder.
 - Sound no longer stops after the output device changes (Bluetooth
