@@ -1,5 +1,6 @@
 pub mod bwf;
 pub mod decode;
+pub mod detail;
 pub mod peaks;
 pub mod player;
 

@@ -74,6 +74,7 @@ class _EditorPageState extends State<EditorPage>
   int _playhead = 0;
   bool _playing = false;
   double _peaksDone = 0;
+  int _detailGeneration = 0;
   late final Ticker _ticker = createTicker(_tick);
 
   // Gesture state.
@@ -93,7 +94,12 @@ class _EditorPageState extends State<EditorPage>
     super.initState();
     markupChanged.addListener(_onSynced);
     volumesChanged.addListener(_onVolumes);
+    waveDetailed.addListener(_onWaveStyle);
     _load();
+  }
+
+  void _onWaveStyle() {
+    if (mounted) setState(() => _view = _clampView(_view));
   }
 
   /// A sync brought markup from a volume.
@@ -207,6 +213,7 @@ class _EditorPageState extends State<EditorPage>
   void dispose() {
     markupChanged.removeListener(_onSynced);
     volumesChanged.removeListener(_onVolumes);
+    waveDetailed.removeListener(_onWaveStyle);
     _ticker.dispose();
     super.dispose();
   }
@@ -221,6 +228,7 @@ class _EditorPageState extends State<EditorPage>
     // Asked here, not while laying out the wave: the label above is built
     // before the wave, so it would always show the previous value.
     final done = engine.peaksDone();
+    final detail = waveDetailed.value ? engine.detailGeneration() : 0;
     var view = _view;
     // Keep the playhead in sight while playing: page forward like a tape deck.
     if (playing && _width > 0 && _drag == _Drag.none) {
@@ -232,12 +240,14 @@ class _EditorPageState extends State<EditorPage>
     if (pos != _playhead ||
         playing != _playing ||
         view != _view ||
-        done != _peaksDone) {
+        done != _peaksDone ||
+        detail != _detailGeneration) {
       setState(() {
         _playhead = pos;
         _playing = playing;
         _view = view;
         _peaksDone = done;
+        _detailGeneration = detail;
       });
     }
   }
@@ -266,27 +276,29 @@ class _EditorPageState extends State<EditorPage>
 
   WaveView _clampView(WaveView v) {
     final maxFpp = _total / math.max(_width, 1);
-    final fpp = v.fpp
-        .clamp(minFramesPerPx, math.max(maxFpp, minFramesPerPx))
-        .toDouble();
+    final fpp = v.fpp.clamp(_minFpp, math.max(maxFpp, _minFpp)).toDouble();
     final maxStart = math.max(0.0, _total - _width * fpp);
     return WaveView(v.start.clamp(0.0, maxStart).toDouble(), fpp);
   }
 
+  /// Closest zoom: single samples in the detailed waveform.
+  double get _minFpp =>
+      waveDetailed.value ? detailMinFramesPerPx : minFramesPerPx;
+
   /// Widest view (the whole file) in frames per pixel.
   double get _maxFpp =>
-      math.max(_total / math.max(_width, 1), minFramesPerPx).toDouble();
+      math.max(_total / math.max(_width, 1), _minFpp).toDouble();
 
   /// 0 = the whole file, 1 = the closest zoom; logarithmic, like the pinch.
   double get _zoomValue {
-    final range = math.log(_maxFpp / minFramesPerPx);
+    final range = math.log(_maxFpp / _minFpp);
     if (range <= 0) return 0;
     return (math.log(_maxFpp / _view.fpp) / range).clamp(0.0, 1.0).toDouble();
   }
 
   /// Zooms around the playhead when it is in view, else around the middle.
   void _setZoom(double z) {
-    final fpp = _maxFpp * math.pow(minFramesPerPx / _maxFpp, z);
+    final fpp = _maxFpp * math.pow(_minFpp / _maxFpp, z);
     final x = _view.xOf(_playhead);
     final anchor = x >= 0 && x <= _width ? x : _width / 2;
     final frame = _view.frameAt(anchor);
@@ -1103,11 +1115,18 @@ class _EditorPageState extends State<EditorPage>
             _view = _clampView(_view);
           }
         }
-        final peaks = engine.peaks(
-          start: _view.start,
-          end: _view.end(w),
-          columns: waveColumns(_view.end(w) - _view.start, w),
-        );
+        final detailed = waveDetailed.value;
+        final peaks = detailed
+            ? engine.waveDetail(
+                start: _view.start,
+                end: _view.end(w),
+                columns: math.max(1, w.floor()),
+              )
+            : engine.peaks(
+                start: _view.start,
+                end: _view.end(w),
+                columns: waveColumns(_view.end(w) - _view.start, w),
+              );
         return GestureDetector(
           onTapUp: _onTapUp,
           onDoubleTap: _fit,
@@ -1132,6 +1151,7 @@ class _EditorPageState extends State<EditorPage>
                 playhead: _playhead,
                 sampleRate: info.sampleRate,
                 accent: accent,
+                detailed: detailed,
               ),
             ),
           ),

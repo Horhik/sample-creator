@@ -71,7 +71,11 @@ class WavePainter extends CustomPainter {
     required this.playhead,
     required this.sampleRate,
     required this.accent,
+    this.detailed = false,
   });
+
+  /// Columns are one per pixel; drawn with straight edges.
+  final bool detailed;
 
   static const labelHeight = 22.0;
 
@@ -161,6 +165,7 @@ class WavePainter extends CustomPainter {
         mid: cy,
         amp: amp,
         paint: wave,
+        smooth: !detailed,
       );
     }
 
@@ -406,6 +411,22 @@ String regionNote(review.ReviewRegion r) {
   return ' → ${out.toStringAsFixed(2)} $sec (${notes.join(', ')})';
 }
 
+/// Detailed waveform (a setting): a column per pixel with straight edges,
+/// down to single samples, instead of smooth curves through the summary.
+final waveDetailed = ValueNotifier<bool>(false);
+
+void loadWaveStyle() {
+  waveDetailed.value = review.getSetting(key: 'mobile.waveform') == 'detailed';
+}
+
+void setWaveDetailed(bool on) {
+  waveDetailed.value = on;
+  review.setSetting(key: 'mobile.waveform', value: on ? 'detailed' : 'smooth');
+}
+
+/// Closest zoom of the detailed waveform: one sample per pixel.
+const detailMinFramesPerPx = 1.0;
+
 /// Closest zoom, frames per pixel (mirrors `peaks::MIN_FRAMES_PER_PX`): a
 /// summary bin spans at most 4 px, so the waveform stays smooth and fills the
 /// view.
@@ -458,6 +479,7 @@ void fillEnvelope(
   required double mid,
   required double amp,
   required Paint paint,
+  bool smooth = true,
 }) {
   final n = lo.length;
   if (n == 0 || total == 0) return;
@@ -470,9 +492,15 @@ void fillEnvelope(
     for (var i = n - 1; i >= 0; i--) Offset(xAt(i), mid - lo[i] * amp + 0.5),
   ];
   final path = Path()..moveTo(top[0].dx, top[0].dy);
-  _smoothThrough(path, top);
-  path.lineTo(bottom[0].dx, bottom[0].dy);
-  _smoothThrough(path, bottom);
+  if (smooth) {
+    _smoothThrough(path, top);
+    path.lineTo(bottom[0].dx, bottom[0].dy);
+    _smoothThrough(path, bottom);
+  } else {
+    for (final p in [...top.skip(1), ...bottom]) {
+      path.lineTo(p.dx, p.dy);
+    }
+  }
   path.close();
   canvas.drawPath(path, paint);
 }

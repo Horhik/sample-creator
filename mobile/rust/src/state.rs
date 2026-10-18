@@ -28,6 +28,8 @@ pub struct Open {
     pub rec: Recording,
     pub history: History,
     pub peaks: peaks::PeakJob,
+    /// Samples of the visible stretch, for the detailed waveform.
+    pub detail: sample_creator_engine::audio::detail::Detail,
 }
 
 pub static STATE: OnceLock<State> = OnceLock::new();

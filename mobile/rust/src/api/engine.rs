@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
 use flutter_rust_bridge::frb;
-use sample_creator_engine::audio::{self, peaks, player::Player};
+use sample_creator_engine::audio::{self, detail::Detail, peaks, player::Player};
 use sample_creator_engine::core::history::{Change, History};
 use sample_creator_engine::core::{ChannelMode, Marker, PALETTE, Region, color_name};
 use sample_creator_engine::recording::{self, Recording};
@@ -118,6 +118,7 @@ pub fn open_file(path: String) -> Result<FileInfo> {
     let path = PathBuf::from(path);
     let rec = recording::open(&*library()?, &path)?;
     let job = peaks::start(&path, usize::from(rec.info.channels), rec.info.total_frames);
+    let detail = Detail::start(&path, usize::from(rec.info.channels), rec.info.total_frames);
     if let Some(p) = &state.player {
         p.load(path.clone());
     }
@@ -126,6 +127,7 @@ pub fn open_file(path: String) -> Result<FileInfo> {
         rec,
         history: History::default(),
         peaks: job,
+        detail,
     });
     Ok(info)
 }
@@ -225,6 +227,48 @@ pub fn peaks(start: f64, end: f64, columns: u32) -> Result<PeaksView> {
             data,
         })
     })
+}
+
+/// Like [`peaks`], for the detailed waveform: closer than the summary goes,
+/// from the samples themselves once they are read (asked for here, read in
+/// the background; [`detail_generation`] changes when they arrive).
+#[frb(sync)]
+pub fn wave_detail(start: f64, end: f64, columns: u32) -> Result<PeaksView> {
+    with_open(|open, _| {
+        let p = &open.peaks.peaks;
+        let channels = usize::from(open.rec.info.channels);
+        let total = open.rec.info.total_frames.max(1);
+        let step = (end - start) / f64::from(columns.max(1));
+        let close = step < peaks::FINE as f64;
+        if close {
+            open.detail.want(start, end);
+        }
+        let reader = p.read();
+        let detail = close.then(|| open.detail.read());
+        let mut data = Vec::with_capacity(channels * columns as usize * 2);
+        for ch in 0..channels {
+            for col in 0..columns {
+                let a = start + step * f64::from(col);
+                let (lo, hi) = detail
+                    .as_ref()
+                    .and_then(|d| d.min_max(ch, a, a + step))
+                    .or_else(|| reader.min_max(ch, a, a + step))
+                    .unwrap_or((f32::NAN, f32::NAN));
+                data.push(lo);
+                data.push(hi);
+            }
+        }
+        Ok(PeaksView {
+            done: p.done_frames() as f64 / total as f64,
+            data,
+        })
+    })
+}
+
+/// Changes when new samples for the detailed waveform are in.
+#[frb(sync)]
+pub fn detail_generation() -> i64 {
+    with_open(|open, _| Ok(open.detail.generation() as i64)).unwrap_or(0)
 }
 
 // ---- Markup ----

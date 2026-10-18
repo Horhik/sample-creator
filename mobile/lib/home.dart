@@ -8,6 +8,7 @@ import 'display.dart';
 import 'listening.dart';
 import 'remote_ui.dart';
 import 'sync_ui.dart';
+import 'waveform.dart' show loadWaveStyle;
 import 'l10n.dart';
 
 /// The three pages of the desktop app: markup, region review, processing.
@@ -28,6 +29,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     syncAll();
     reconnectShared();
     loadListening();
+    loadWaveStyle();
   }
 
   @override

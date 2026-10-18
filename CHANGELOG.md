@@ -9,6 +9,10 @@
   markup file was made on a device that had another folder as the root, the
   recordings are found by name. Recordings that earlier landed on a wrong
   path are relinked on the next sync.
+- A "Detailed waveform" setting (desktop: the settings menu; phone: the side
+  panel): every pixel is drawn on its own without smoothing, and at deep zoom
+  the waveform is built from the samples themselves, down to one sample per
+  pixel. The current smooth waveform stays the default.
 - The file list opens with the current recording in the middle, not at the
   top of the folder.
 - Sound no longer stops after the output device changes (Bluetooth

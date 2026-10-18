@@ -13,6 +13,7 @@ use std::sync::Arc;
 use relm4::adw;
 use relm4::gtk::{self, cairo, gdk, glib, prelude::*};
 
+use crate::audio::detail::{self, Detail, DetailReader};
 use crate::audio::peaks::{self as peaks_mod, Peaks, PeaksReader};
 use crate::core::{ColorIdx, Id, Item, Markup, PALETTE};
 use crate::lang::tr;
@@ -21,8 +22,10 @@ const RULER_H: f64 = 20.0;
 const LABEL_H: f64 = 20.0;
 const LANES_TOP: f64 = RULER_H + LABEL_H;
 const OVERVIEW_H: i32 = 44;
-/// Deepest zoom; below this the fine peak bins just repeat.
+/// Deepest zoom of the smooth waveform; below this the fine peak bins just repeat.
 const MIN_FRAMES_PER_PX: f64 = peaks_mod::MIN_FRAMES_PER_PX;
+/// Deepest zoom of the detailed waveform, which reads the samples themselves.
+const DETAIL_MIN_FRAMES_PER_PX: f64 = detail::MIN_FRAMES_PER_PX;
 /// How close (px) the pointer must be to grab a marker or a region edge.
 const GRAB_PX: f64 = 5.0;
 /// Pointer travel (px) that turns a click into a drag.
@@ -99,6 +102,12 @@ enum Drag {
 #[derive(Default)]
 struct State {
     peaks: Option<Arc<Peaks>>,
+    /// Samples of the visible stretch, for the detailed waveform.
+    detail: Option<Arc<Detail>>,
+    /// Detailed waveform: a column per pixel, straight edges, zoom down to
+    /// single samples. Otherwise smooth curves through the summary.
+    detailed: bool,
+    drawn_detail: u64,
     sample_rate: u32,
     total_frames: u64,
 
@@ -127,14 +136,22 @@ impl State {
         self.width * self.frames_per_px
     }
 
+    fn min_frames_per_px(&self) -> f64 {
+        if self.detailed {
+            DETAIL_MIN_FRAMES_PER_PX
+        } else {
+            MIN_FRAMES_PER_PX
+        }
+    }
+
     fn max_frames_per_px(&self) -> f64 {
-        (self.total_frames as f64 / self.width.max(1.0)).max(MIN_FRAMES_PER_PX)
+        (self.total_frames as f64 / self.width.max(1.0)).max(self.min_frames_per_px())
     }
 
     fn clamp_view(&mut self) {
         self.frames_per_px = self
             .frames_per_px
-            .clamp(MIN_FRAMES_PER_PX, self.max_frames_per_px());
+            .clamp(self.min_frames_per_px(), self.max_frames_per_px());
         let max_start = (self.total_frames as f64 - self.visible_frames()).max(0.0);
         self.view_start = self.view_start.clamp(0.0, max_start);
     }
@@ -267,11 +284,13 @@ impl Waveform {
         self.state.borrow_mut().on_event = Some(Rc::new(f));
     }
 
-    pub fn set_file(&self, peaks: Arc<Peaks>, sample_rate: u32) {
+    pub fn set_file(&self, peaks: Arc<Peaks>, detail: Arc<Detail>, sample_rate: u32) {
         {
             let mut s = self.state.borrow_mut();
             s.total_frames = peaks.total_frames;
             s.peaks = Some(peaks);
+            s.detail = Some(detail);
+            s.drawn_detail = 0;
             s.sample_rate = sample_rate;
             s.markup = Markup::default();
             s.selected = None;
@@ -284,6 +303,15 @@ impl Waveform {
             s.frames_per_px = f64::MAX;
             s.clamp_view();
         }
+        self.redraw();
+    }
+
+    /// Detailed or smooth waveform (a setting).
+    pub fn set_detailed(&self, detailed: bool) {
+        let mut s = self.state.borrow_mut();
+        s.detailed = detailed;
+        s.clamp_view();
+        drop(s);
         self.redraw();
     }
 
@@ -311,9 +339,15 @@ impl Waveform {
     pub fn update(&self, playhead: u64, playing: bool) {
         let mut s = self.state.borrow_mut();
         let done = s.peaks.as_ref().map_or(0, |p| p.done_frames());
-        if s.playhead == playhead && s.playing == playing && s.drawn_done == done {
+        let detail = s.detail.as_ref().map_or(0, |d| d.generation());
+        if s.playhead == playhead
+            && s.playing == playing
+            && s.drawn_done == done
+            && s.drawn_detail == detail
+        {
             return;
         }
+        s.drawn_detail = detail;
         if playing && !s.playing {
             s.follow = true;
         }
@@ -772,6 +806,15 @@ fn draw_main(
     draw_regions_under(cr, w, h, s)?;
 
     let reader = peaks.read();
+    // Closer than the summary goes: the samples of the view, once loaded.
+    let detail = s
+        .detail
+        .as_ref()
+        .filter(|_| s.detailed && s.frames_per_px < peaks_mod::FINE as f64);
+    if let Some(d) = detail {
+        d.want(s.view_start, s.view_start + s.visible_frames());
+    }
+    let detail = detail.map(|d| d.read());
     for ch in 0..channels {
         let top = LANES_TOP + lane_h * ch as f64;
         let mid = top + lane_h / 2.0;
@@ -785,9 +828,15 @@ fn draw_main(
         cr.fill()?;
 
         set_color(cr, &pal.fg, 0.75);
-        let points = envelope(&reader, ch..ch + 1, s.view_start, s.frames_per_px, w);
-        fill_envelope(cr, &points, mid, half)?;
+        if s.detailed {
+            let points = columns(&reader, detail.as_ref(), ch, s.view_start, s.frames_per_px, w);
+            fill_columns(cr, &points, mid, half)?;
+        } else {
+            let points = envelope(&reader, ch..ch + 1, s.view_start, s.frames_per_px, w);
+            fill_envelope(cr, &points, mid, half)?;
+        }
     }
+    drop(detail);
     drop(reader);
 
     // Part of the file not analysed yet.
@@ -1063,6 +1112,52 @@ pub(crate) fn envelope(
         x += step;
     }
     out
+}
+
+/// Min/max of `channel` for every pixel across `[0, w)` from frame `start`:
+/// from the samples where `detail` holds them, else from the summary.
+fn columns(
+    reader: &PeaksReader,
+    detail: Option<&DetailReader>,
+    channel: usize,
+    start: f64,
+    fpp: f64,
+    w: f64,
+) -> Vec<(f64, f32, f32)> {
+    let mut out = Vec::with_capacity(w as usize + 1);
+    let mut x = 0.0;
+    while x < w {
+        let (a, b) = (start + x * fpp, start + (x + 1.0) * fpp);
+        let m = detail
+            .and_then(|d| d.min_max(channel, a, b))
+            .or_else(|| reader.min_max(channel, a, b));
+        let Some((lo, hi)) = m else { break };
+        out.push((x + 0.5, lo, hi));
+        x += 1.0;
+    }
+    out
+}
+
+/// Fills between the max and min of `points` (one per pixel, from
+/// [`columns`]) around `mid`, edges straight from pixel to pixel.
+fn fill_columns(
+    cr: &cairo::Context,
+    points: &[(f64, f32, f32)],
+    mid: f64,
+    half: f64,
+) -> Result<(), cairo::Error> {
+    let Some(first) = points.first() else {
+        return Ok(());
+    };
+    cr.move_to(first.0, mid - f64::from(first.2) * half - 0.5);
+    for &(x, _, hi) in points {
+        cr.line_to(x, mid - f64::from(hi) * half - 0.5);
+    }
+    for &(x, lo, _) in points.iter().rev() {
+        cr.line_to(x, mid - f64::from(lo) * half + 0.5);
+    }
+    cr.close_path();
+    cr.fill()
 }
 
 /// Fills the area between the max and min curves of `points` (from

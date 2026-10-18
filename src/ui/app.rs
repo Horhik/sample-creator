@@ -60,6 +60,8 @@ pub enum AppMsg {
     DisableSync,
     /// 0 = the system's language, 1 = English, 2 = Russian.
     Language(u32),
+    /// 0 = smooth waveform, 1 = detailed.
+    WaveStyle(u32),
     /// Open this folder to another Sample Creator (phone) over iroh.
     Share(PathBuf),
     ShareReady(SharedFolder),
@@ -142,6 +144,32 @@ impl SimpleComponent for App {
                                     add_css_class: "dim-label",
                                     add_css_class: "caption",
                                     set_xalign: 0.0,
+                                },
+                                gtk::Label {
+                                    set_label: tr("Волна", "Waveform"),
+                                    add_css_class: "heading",
+                                    set_xalign: 0.0,
+                                    set_margin_top: 8,
+                                },
+                                #[name = "wave_style"]
+                                gtk::DropDown::from_strings(&[
+                                    tr("Плавная", "Smooth"),
+                                    tr("Подробная", "Detailed"),
+                                ]) {
+                                    set_selected: u32::from(
+                                        model.library.setting("waveform").as_deref() == Some("detailed"),
+                                    ),
+                                },
+                                gtk::Label {
+                                    set_label: tr(
+                                        "Подробная: каждый пиксель отдельно, при сильном зуме — сами сэмплы",
+                                        "Detailed: every pixel on its own, the samples themselves at deep zoom",
+                                    ),
+                                    add_css_class: "dim-label",
+                                    add_css_class: "caption",
+                                    set_xalign: 0.0,
+                                    set_wrap: true,
+                                    set_max_width_chars: 32,
                                 },
                             },
                         },
@@ -372,6 +400,11 @@ impl SimpleComponent for App {
             // clicks outside it; close it, the choice is made.
             popover.popdown();
         });
+        let (s, popover) = (sender.clone(), widgets.settings_popover.clone());
+        widgets.wave_style.connect_selected_notify(move |d| {
+            s.input(AppMsg::WaveStyle(d.selected()));
+            popover.popdown();
+        });
         // Closing the window writes the markup out to volumes that keep it.
         let lib = model.library.clone();
         window.connect_close_request(move |_| {
@@ -445,6 +478,14 @@ impl SimpleComponent for App {
             AppMsg::SyncNow => {
                 let result = sync::sync_target(&self.library, &self.root);
                 self.after_sync(result, &sender);
+            }
+            AppMsg::WaveStyle(i) => {
+                let detailed = i == 1;
+                let value = if detailed { "detailed" } else { "smooth" };
+                if let Err(err) = self.library.set_setting("waveform", value) {
+                    eprintln!("waveform: {err:#}");
+                }
+                self.editor.emit(EditorMsg::WaveDetailed(detailed));
             }
             AppMsg::Language(i) => {
                 let value = match i {

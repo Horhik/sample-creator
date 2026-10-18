@@ -46,6 +46,23 @@ PeaksView peaks({
   columns: columns,
 );
 
+/// Like [`peaks`], for the detailed waveform: closer than the summary goes,
+/// from the samples themselves once they are read (asked for here, read in
+/// the background; [`detail_generation`] changes when they arrive).
+PeaksView waveDetail({
+  required double start,
+  required double end,
+  required int columns,
+}) => RustLib.instance.api.crateApiEngineWaveDetail(
+  start: start,
+  end: end,
+  columns: columns,
+);
+
+/// Changes when new samples for the detailed waveform are in.
+PlatformInt64 detailGeneration() =>
+    RustLib.instance.api.crateApiEngineDetailGeneration();
+
 MarkupView markup() => RustLib.instance.api.crateApiEngineMarkup();
 
 Future<PlatformInt64> addMarker({

@@ -11,7 +11,7 @@ import 'remote_ui.dart';
 import 'src/rust/api/remote.dart' as remote_api;
 import 'sync_ui.dart';
 import 'l10n.dart';
-import 'waveform.dart' show friendlyError;
+import 'waveform.dart' show friendlyError, setWaveDetailed, waveDetailed;
 
 const _storage = MethodChannel('sample_creator/storage');
 
@@ -447,6 +447,21 @@ class FileBrowserState extends State<FileBrowser> {
                   const DropdownMenuItem(value: 'ru', child: Text('Русский')),
                 ],
               ),
+            ),
+          ),
+          ValueListenableBuilder(
+            valueListenable: waveDetailed,
+            builder: (context, on, _) => SwitchListTile(
+              secondary: const Icon(Icons.graphic_eq),
+              title: Text(tr('Подробная волна', 'Detailed waveform')),
+              subtitle: Text(
+                tr(
+                  'Каждый пиксель отдельно, при сильном зуме — сами сэмплы',
+                  'Every pixel on its own, the samples themselves at deep zoom',
+                ),
+              ),
+              value: on,
+              onChanged: setWaveDetailed,
             ),
           ),
           ValueListenableBuilder(

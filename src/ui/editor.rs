@@ -14,6 +14,7 @@ use super::context_menu;
 use super::markup_list::{ListEvent, MarkupList};
 use super::waveform::{WaveEvent, Waveform, format_time};
 use crate::audio::decode::AudioInfo;
+use crate::audio::detail::Detail;
 use crate::audio::peaks::{self, PeakJob};
 use crate::audio::player::{MONITOR_MAX_DB, MONITOR_MIN_DB, Player};
 use crate::core::history::{Change, History};
@@ -71,6 +72,8 @@ pub enum EditorMsg {
     ToStart,
     /// Relative seek in seconds.
     Nudge(f64),
+    /// Detailed (true) or smooth waveform; a setting.
+    WaveDetailed(bool),
     /// Listening volume in dB, for everything played (not exported).
     ListeningDb(f64),
     ZoomIn,
@@ -356,6 +359,7 @@ impl SimpleComponent for Editor {
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         let waveform = Waveform::new();
+        waveform.set_detailed(library.setting("waveform").as_deref() == Some("detailed"));
         let s = sender.input_sender().clone();
         waveform.connect_event(move |e| s.emit(EditorMsg::Wave(e)));
         let list = MarkupList::new();
@@ -444,6 +448,10 @@ impl SimpleComponent for Editor {
             }
             EditorMsg::ZoomOut => {
                 self.waveform.zoom(2.0);
+                false
+            }
+            EditorMsg::WaveDetailed(on) => {
+                self.waveform.set_detailed(on);
                 false
             }
             EditorMsg::ListeningDb(db) => {
@@ -648,8 +656,16 @@ impl Editor {
             Ok(loaded) => {
                 self.error = None;
                 let job = &loaded._peaks;
-                self.waveform
-                    .set_file(job.peaks.clone(), loaded.info.sample_rate);
+                let detail = Detail::start(
+                    &loaded.path,
+                    usize::from(loaded.info.channels),
+                    loaded.info.total_frames,
+                );
+                self.waveform.set_file(
+                    job.peaks.clone(),
+                    std::sync::Arc::new(detail),
+                    loaded.info.sample_rate,
+                );
                 if let Some(p) = self.player() {
                     p.load(path);
                 }
