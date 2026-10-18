@@ -2,6 +2,13 @@
 
 <p><b>English</b> | <a href="CHANGELOG.ru.md">Русский</a></p>
 
+## Unreleased
+
+- Phone: after a markup file is applied, the file list shows the recordings'
+  names and counts right away, without opening each recording. When the
+  markup file was made on a device that had another folder as the root, the
+  recordings are found by name.
+
 ## 0.3.1
 
 - Listening goes on where it stopped: the playhead is remembered per

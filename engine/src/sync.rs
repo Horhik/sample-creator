@@ -4,7 +4,7 @@
 //! exception).
 //!
 //! The file lists the recordings of one volume by fingerprint, with paths
-//! relative to the volume root, so a phone (`/storage/XXXX-XXXX`) and a
+//! relative to the volume root (found by name if the roots differ), so a phone (`/storage/XXXX-XXXX`) and a
 //! computer (`/run/media/…`) share it. Syncing is per recording, newest edit
 //! wins in both directions; deletions travel because the whole markup of a
 //! recording is replaced.
@@ -218,13 +218,15 @@ pub fn sync(library: &Library, root: &Path, path: &Path) -> Result<Report> {
 
     // File → app, where the file is newer.
     let mut kept: HashMap<u64, RecordingState> = HashMap::new();
+    let mut places = Places::new(root, path.parent().unwrap_or(root));
     for rec in from_file {
         let Ok(fp) = u64::from_str_radix(&rec.fingerprint, 16) else {
             continue;
         };
         let newer = by_fp.get(&fp).is_none_or(|f| rec.updated_at > f.updated_at);
         if newer {
-            let (file, markup) = to_library(&rec, fp, root);
+            let (mut file, markup) = to_library(&rec, fp, root);
+            file.path = places.find(&rec.path);
             library.replace_recording(&file, &markup)?;
             report.imported += 1;
         }
@@ -308,6 +310,87 @@ fn relative(path: &Path, root: &Path) -> String {
         .map(|c| c.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+/// Where a recording listed in the file is on this device. Paths are kept
+/// relative to the volume root, but another device may have taken a folder
+/// as the root (the desktop tree starts wherever it was opened), which shifts
+/// them. Then the recording is looked up by name under the root, preferring
+/// the longest matching tail of the path; the fingerprint corrects the rest
+/// when the recording is opened.
+struct Places<'a> {
+    root: &'a Path,
+    location: &'a Path,
+    by_name: Option<HashMap<String, Vec<PathBuf>>>,
+}
+
+impl<'a> Places<'a> {
+    fn new(root: &'a Path, location: &'a Path) -> Self {
+        Places {
+            root,
+            location,
+            by_name: None,
+        }
+    }
+
+    fn find(&mut self, rel: &str) -> PathBuf {
+        let parts: Vec<&str> = rel.split('/').filter(|p| !p.is_empty()).collect();
+        let join = |base: &Path| {
+            parts
+                .iter()
+                .fold(base.to_path_buf(), |p, part| p.join(part))
+        };
+        let direct = join(self.root);
+        if direct.is_file() {
+            return direct;
+        }
+        let near = join(self.location);
+        if near.is_file() {
+            return near;
+        }
+        let Some(name) = parts.last() else {
+            return direct;
+        };
+        let root = self.root;
+        let by_name = self.by_name.get_or_insert_with(|| {
+            let mut found = HashMap::new();
+            collect_audio(root, 0, &mut found);
+            found
+        });
+        let tail = |p: &Path| {
+            p.components()
+                .rev()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .zip(parts.iter().rev())
+                .take_while(|(a, b)| a == *b)
+                .count()
+        };
+        by_name
+            .get(*name)
+            .and_then(|paths| paths.iter().max_by_key(|p| tail(p)))
+            .cloned()
+            .unwrap_or(direct)
+    }
+}
+
+fn collect_audio(dir: &Path, depth: usize, found: &mut HashMap<String, Vec<PathBuf>>) {
+    let Ok(items) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for item in items.flatten() {
+        let name = item.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
+        let path = item.path();
+        match item.file_type() {
+            Ok(t) if t.is_dir() && depth < 8 => collect_audio(&path, depth + 1, found),
+            Ok(t) if t.is_file() && crate::audio::is_supported(&path) => {
+                found.entry(name).or_default().push(path)
+            }
+            _ => {}
+        }
+    }
 }
 
 fn channels_key(m: ChannelMode) -> &'static str {
@@ -552,6 +635,43 @@ mod tests {
 
         // Nothing new: nothing moves.
         assert_eq!(sync(&phone, phone_root, &state).unwrap(), Report::default());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn finds_recordings_when_roots_differ() {
+        let dir = std::env::temp_dir().join(format!("sc-sync-roots-{}", std::process::id()));
+        let card = dir.join("card");
+        std::fs::create_dir_all(card.join("MUSIC")).unwrap();
+        std::fs::create_dir_all(card.join("OTHER")).unwrap();
+        std::fs::write(card.join("MUSIC/take.wav"), b"").unwrap();
+        std::fs::write(card.join("OTHER/solo.wav"), b"").unwrap();
+        let state = file_in(&card.join("MUSIC"));
+
+        // The computer synced with the tree opened at MUSIC: "take.wav".
+        let pc = Library::open_in_memory().unwrap();
+        let pc_root = card.join("MUSIC");
+        let f = pc
+            .file(42, &pc_root.join("take.wav"), 48000, 2, 1000)
+            .unwrap();
+        add(&pc, f.id, region(f.id, 10, "riff"));
+        pc.set_alias(f.id, Some("репетиция")).unwrap();
+        sync(&pc, &pc_root, &state).unwrap();
+
+        // The phone has the whole card as the root.
+        let phone = Library::open_in_memory().unwrap();
+        assert_eq!(sync(&phone, &card, &state).unwrap().imported, 1);
+        let at = phone
+            .summary_at(&card.join("MUSIC/take.wav"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(at.alias.as_deref(), Some("репетиция"));
+
+        // Elsewhere in the tree: found by name.
+        let mut places = Places::new(&card, &card);
+        assert_eq!(places.find("x/OTHER/solo.wav"), card.join("OTHER/solo.wav"));
+        assert_eq!(places.find("solo.wav"), card.join("OTHER/solo.wav"));
+        assert_eq!(places.find("MUSIC/gone.wav"), card.join("MUSIC/gone.wav"));
         std::fs::remove_dir_all(dir).ok();
     }
 

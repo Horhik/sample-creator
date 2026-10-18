@@ -140,6 +140,7 @@ class FileBrowserState extends State<FileBrowser> {
     super.initState();
     _loadVolumes();
     volumesChanged.addListener(_onVolumesChanged);
+    markupChanged.addListener(refresh);
     sharedFolders.addListener(_onShared);
     final saved = review_api.getSetting(key: widget.settingsKey);
     final start =
@@ -158,6 +159,7 @@ class FileBrowserState extends State<FileBrowser> {
   @override
   void dispose() {
     volumesChanged.removeListener(_onVolumesChanged);
+    markupChanged.removeListener(refresh);
     sharedFolders.removeListener(_onShared);
     if (_previewing != null) {
       remote_api.stopFilePreview();
@@ -278,7 +280,10 @@ class FileBrowserState extends State<FileBrowser> {
     open(_isRoot(dir) ? null : Directory(dir).parent.path);
   }
 
-  void refresh() => open(_dir);
+  /// Also after a sync brought names and counts from a markup file.
+  void refresh() {
+    if (mounted && _dir != null) open(_dir);
+  }
 
   @override
   Widget build(BuildContext context) {
