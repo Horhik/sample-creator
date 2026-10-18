@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1551100520;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1581577767;
 
 // Section: executor
 
@@ -2595,6 +2595,99 @@ fn wire__crate__api__review__set_setting_impl(
         },
     )
 }
+fn wire__crate__api__engine__spectrum_colormap_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "spectrum_colormap",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok(crate::api::engine::spectrum_colormap())?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__engine__spectrum_done_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "spectrum_done",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok(crate::api::engine::spectrum_done())?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__engine__spectrum_view_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "spectrum_view",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_start = <f64>::sse_decode(&mut deserializer);
+            let api_end = <f64>::sse_decode(&mut deserializer);
+            let api_columns = <u32>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                (move || {
+                    let output_ok =
+                        crate::api::engine::spectrum_view(api_start, api_end, api_columns)?;
+                    Ok(output_ok)
+                })(),
+            )
+        },
+    )
+}
 fn wire__crate__api__review__split_at_output_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -3271,6 +3364,18 @@ impl SseDecode for Vec<i64> {
     }
 }
 
+impl SseDecode for Vec<u32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<u32>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<u8> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -3534,6 +3639,24 @@ impl SseDecode for crate::api::review::ReviewRegion {
     }
 }
 
+impl SseDecode for crate::api::engine::SpectrumData {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_done = <f64>::sse_decode(deserializer);
+        let mut var_bands = <u32>::sse_decode(deserializer);
+        let mut var_levels = <Vec<u8>>::sse_decode(deserializer);
+        let mut var_colors = <Vec<u32>>::sse_decode(deserializer);
+        let mut var_events = <Vec<f32>>::sse_decode(deserializer);
+        return crate::api::engine::SpectrumData {
+            done: var_done,
+            bands: var_bands,
+            levels: var_levels,
+            colors: var_colors,
+            events: var_events,
+        };
+    }
+}
+
 impl SseDecode for crate::api::sync::SyncInfo {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -3647,11 +3770,11 @@ fn pde_ffi_dispatcher_primary_impl(
         72 => wire__crate__api__engine__set_region_gain_impl(port, ptr, rust_vec_len, data_len),
         73 => wire__crate__api__engine__set_region_speed_impl(port, ptr, rust_vec_len, data_len),
         74 => wire__crate__api__review__set_setting_impl(port, ptr, rust_vec_len, data_len),
-        75 => wire__crate__api__review__split_at_output_impl(port, ptr, rust_vec_len, data_len),
-        76 => wire__crate__api__review__split_region_impl(port, ptr, rust_vec_len, data_len),
-        80 => wire__crate__api__sync__sync_all_volumes_impl(port, ptr, rust_vec_len, data_len),
-        82 => wire__crate__api__sync__sync_volume_impl(port, ptr, rust_vec_len, data_len),
-        84 => wire__crate__api__engine__undo_impl(port, ptr, rust_vec_len, data_len),
+        78 => wire__crate__api__review__split_at_output_impl(port, ptr, rust_vec_len, data_len),
+        79 => wire__crate__api__review__split_region_impl(port, ptr, rust_vec_len, data_len),
+        83 => wire__crate__api__sync__sync_all_volumes_impl(port, ptr, rust_vec_len, data_len),
+        85 => wire__crate__api__sync__sync_volume_impl(port, ptr, rust_vec_len, data_len),
+        87 => wire__crate__api__engine__undo_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3692,12 +3815,15 @@ fn pde_ffi_dispatcher_sync_impl(
         64 => wire__crate__api__engine__set_language_impl(ptr, rust_vec_len, data_len),
         65 => wire__crate__api__engine__set_listening_db_impl(ptr, rust_vec_len, data_len),
         69 => wire__crate__api__engine__set_range_impl(ptr, rust_vec_len, data_len),
-        77 => wire__crate__api__sync__state_file_name_impl(ptr, rust_vec_len, data_len),
-        78 => wire__crate__api__remote__stop_file_preview_impl(ptr, rust_vec_len, data_len),
-        79 => wire__crate__api__review__stop_preview_impl(ptr, rust_vec_len, data_len),
-        81 => wire__crate__api__sync__sync_info_impl(ptr, rust_vec_len, data_len),
-        83 => wire__crate__api__review__template_help_impl(ptr, rust_vec_len, data_len),
-        85 => wire__crate__api__engine__wave_detail_impl(ptr, rust_vec_len, data_len),
+        75 => wire__crate__api__engine__spectrum_colormap_impl(ptr, rust_vec_len, data_len),
+        76 => wire__crate__api__engine__spectrum_done_impl(ptr, rust_vec_len, data_len),
+        77 => wire__crate__api__engine__spectrum_view_impl(ptr, rust_vec_len, data_len),
+        80 => wire__crate__api__sync__state_file_name_impl(ptr, rust_vec_len, data_len),
+        81 => wire__crate__api__remote__stop_file_preview_impl(ptr, rust_vec_len, data_len),
+        82 => wire__crate__api__review__stop_preview_impl(ptr, rust_vec_len, data_len),
+        84 => wire__crate__api__sync__sync_info_impl(ptr, rust_vec_len, data_len),
+        86 => wire__crate__api__review__template_help_impl(ptr, rust_vec_len, data_len),
+        88 => wire__crate__api__engine__wave_detail_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -4075,6 +4201,30 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::review::ReviewRegion>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::engine::SpectrumData {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.done.into_into_dart().into_dart(),
+            self.bands.into_into_dart().into_dart(),
+            self.levels.into_into_dart().into_dart(),
+            self.colors.into_into_dart().into_dart(),
+            self.events.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::engine::SpectrumData
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::engine::SpectrumData>
+    for crate::api::engine::SpectrumData
+{
+    fn into_into_dart(self) -> crate::api::engine::SpectrumData {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::sync::SyncInfo {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -4371,6 +4521,16 @@ impl SseEncode for Vec<i64> {
     }
 }
 
+impl SseEncode for Vec<u32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <u32>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<u8> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -4550,6 +4710,17 @@ impl SseEncode for crate::api::review::ReviewRegion {
         <crate::api::review::FxView>::sse_encode(self.fx, serializer);
         <bool>::sse_encode(self.processed, serializer);
         <Vec<String>>::sse_encode(self.fx_notes, serializer);
+    }
+}
+
+impl SseEncode for crate::api::engine::SpectrumData {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <f64>::sse_encode(self.done, serializer);
+        <u32>::sse_encode(self.bands, serializer);
+        <Vec<u8>>::sse_encode(self.levels, serializer);
+        <Vec<u32>>::sse_encode(self.colors, serializer);
+        <Vec<f32>>::sse_encode(self.events, serializer);
     }
 }
 

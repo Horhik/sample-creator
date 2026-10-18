@@ -8,6 +8,7 @@ import 'item_sheet.dart';
 import 'browser.dart';
 import 'display.dart';
 import 'listening.dart';
+import 'wave_look.dart';
 import 'markup_rail.dart';
 import 'remote_ui.dart';
 import 'src/rust/api/remote.dart' as remote_api;
@@ -77,6 +78,26 @@ class _EditorPageState extends State<EditorPage>
   bool _playing = false;
   double _peaksDone = 0;
   int _detailGeneration = 0;
+  int _spectrumDone = 0;
+
+  /// Share of the file whose frequencies are analysed, from the last view.
+  double _spectrumFraction = 1;
+
+  /// Last frequencies asked for, by what they were asked with: the wave is
+  /// rebuilt every frame while playing, the view mostly stays.
+  final _spectra = <String, engine.SpectrumData>{};
+
+  engine.SpectrumData _spectrum(double start, double end, double width) {
+    final columns = math.max(1, math.min(width.floor(), maxSpectrumColumns));
+    final key = '$start $end $columns $_spectrumDone';
+    final hit = _spectra[key];
+    if (hit != null) return hit;
+    final d = engine.spectrumView(start: start, end: end, columns: columns);
+    // The overview and the wave: a couple of entries is all it takes.
+    if (_spectra.length > 4) _spectra.clear();
+    return _spectra[key] = d;
+  }
+
   late final Ticker _ticker = createTicker(_tick);
 
   // Gesture state.
@@ -98,6 +119,8 @@ class _EditorPageState extends State<EditorPage>
     volumesChanged.addListener(_onVolumes);
     waveDetailed.addListener(_onWaveStyle);
     waveDecibels.addListener(_onWaveStyle);
+    waveLook.addListener(_onWaveStyle);
+    waveEvents.addListener(_onWaveStyle);
     fullscreen.addListener(_onWaveStyle);
     markupRail
       ..files = (() => _scaffold.currentState?.openDrawer())
@@ -182,6 +205,8 @@ class _EditorPageState extends State<EditorPage>
       setState(() {
         _info = info;
         _markup = engine.markup();
+        _spectra.clear();
+        _spectrumDone = 0;
       });
       _applyRange();
       if (!_ticker.isActive) _ticker.start();
@@ -224,6 +249,8 @@ class _EditorPageState extends State<EditorPage>
     volumesChanged.removeListener(_onVolumes);
     waveDetailed.removeListener(_onWaveStyle);
     waveDecibels.removeListener(_onWaveStyle);
+    waveLook.removeListener(_onWaveStyle);
+    waveEvents.removeListener(_onWaveStyle);
     fullscreen.removeListener(_onWaveStyle);
     markupRail.update(shown: false);
     _ticker.dispose();
@@ -241,6 +268,7 @@ class _EditorPageState extends State<EditorPage>
     // before the wave, so it would always show the previous value.
     final done = engine.peaksDone();
     final detail = waveDetailed.value ? engine.detailGeneration() : 0;
+    final spectrum = waveNeedsSpectrum ? engine.spectrumDone() : 0;
     var view = _view;
     // Keep the playhead in sight while playing: page forward like a tape deck.
     if (playing && _width > 0 && _drag == _Drag.none) {
@@ -253,13 +281,15 @@ class _EditorPageState extends State<EditorPage>
         playing != _playing ||
         view != _view ||
         done != _peaksDone ||
-        detail != _detailGeneration) {
+        detail != _detailGeneration ||
+        spectrum != _spectrumDone) {
       setState(() {
         _playhead = pos;
         _playing = playing;
         _view = view;
         _peaksDone = done;
         _detailGeneration = detail;
+        _spectrumDone = spectrum;
       });
     }
   }
@@ -1051,6 +1081,7 @@ class _EditorPageState extends State<EditorPage>
               onPressed: _makeRegion,
             ),
             const ListeningButton(),
+            const WaveLookButton(),
             _zoomSlider(width: 140),
             IconButton(
               tooltip: tr('Спрятать управление', 'Hide controls'),
@@ -1129,6 +1160,9 @@ class _EditorPageState extends State<EditorPage>
           end: _total.toDouble(),
           columns: waveColumns(_total.toDouble(), w),
         );
+        final spectrum = waveLook.value == WaveLook.colored || waveEvents.value
+            ? _spectrum(0, _total.toDouble(), w)
+            : null;
         return GestureDetector(
           onTapDown: (d) => jump(d.localPosition.dx),
           onHorizontalDragUpdate: (d) => jump(d.localPosition.dx),
@@ -1144,6 +1178,7 @@ class _EditorPageState extends State<EditorPage>
               markup: shown,
               palette: _palette,
               playhead: _playhead,
+              spectrum: spectrum,
             ),
           ),
         );
@@ -1180,6 +1215,10 @@ class _EditorPageState extends State<EditorPage>
                 end: _view.end(w),
                 columns: waveColumns(_view.end(w) - _view.start, w),
               );
+        final spectrum = waveNeedsSpectrum
+            ? _spectrum(_view.start, _view.end(w), w)
+            : null;
+        _spectrumFraction = spectrum?.done ?? 1;
         return GestureDetector(
           onTapUp: _onTapUp,
           onDoubleTap: _fit,
@@ -1205,6 +1244,9 @@ class _EditorPageState extends State<EditorPage>
                 sampleRate: info.sampleRate,
                 accent: accent,
                 detailed: detailed,
+                spectrum: spectrum,
+                look: waveLook.value,
+                events: waveEvents.value,
               ),
             ),
           ),
@@ -1229,6 +1271,11 @@ class _EditorPageState extends State<EditorPage>
           ? tr(
               'волна: ${(_peaksDone * 100).floor()} %',
               'waveform: ${(_peaksDone * 100).floor()} %',
+            )
+          : _spectrumFraction < 1
+          ? tr(
+              'спектр: ${(_spectrumFraction * 100).floor()} %',
+              'spectrum: ${(_spectrumFraction * 100).floor()} %',
             )
           : '';
     }
@@ -1260,6 +1307,7 @@ class _EditorPageState extends State<EditorPage>
                 )
               else
                 const ListeningButton(),
+              const WaveLookButton(),
             ],
           ),
           Row(

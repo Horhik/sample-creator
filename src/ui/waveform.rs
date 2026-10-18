@@ -15,6 +15,7 @@ use relm4::gtk::{self, cairo, gdk, glib, prelude::*};
 
 use crate::audio::detail::{self, Detail, DetailReader};
 use crate::audio::peaks::{self as peaks_mod, Peaks, PeaksReader};
+use crate::audio::spectrum::{self, Spectrum, SpectrumView};
 use crate::core::{ColorIdx, Id, Item, Markup, PALETTE};
 use crate::lang::tr;
 
@@ -56,6 +57,47 @@ pub enum WaveEvent {
         y: f64,
         frame: u64,
     },
+}
+
+/// How the recording is shown (a setting, `wave_view`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Look {
+    /// Loudness only.
+    #[default]
+    Plain,
+    /// Frequencies over time instead of the waveform.
+    Spectrogram,
+    /// The waveform coloured by where its energy sits: red low, green
+    /// middle, blue high.
+    Colored,
+}
+
+impl Look {
+    pub const ALL: [Look; 3] = [Look::Plain, Look::Spectrogram, Look::Colored];
+
+    pub fn from_setting(value: Option<&str>) -> Look {
+        match value {
+            Some("spectrogram") => Look::Spectrogram,
+            Some("colored") => Look::Colored,
+            _ => Look::Plain,
+        }
+    }
+
+    pub fn setting(self) -> &'static str {
+        match self {
+            Look::Plain => "plain",
+            Look::Spectrogram => "spectrogram",
+            Look::Colored => "colored",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Look::Plain => tr("Волна", "Waveform"),
+            Look::Spectrogram => tr("Спектрограмма", "Spectrogram"),
+            Look::Colored => tr("Цветная волна", "Coloured waveform"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,6 +152,12 @@ struct State {
     /// Height on the decibel scale ([`peaks_mod::db_scale`]), not linear.
     decibels: bool,
     drawn_detail: u64,
+    /// Frequencies over time, while a look or the events curve needs them.
+    spectrum: Option<Arc<Spectrum>>,
+    look: Look,
+    /// A curve rising where the sound changes.
+    events: bool,
+    drawn_spectrum: usize,
     sample_rate: u32,
     total_frames: u64,
 
@@ -293,6 +341,8 @@ impl Waveform {
             s.peaks = Some(peaks);
             s.detail = Some(detail);
             s.drawn_detail = 0;
+            s.spectrum = None;
+            s.drawn_spectrum = 0;
             s.sample_rate = sample_rate;
             s.markup = Markup::default();
             s.selected = None;
@@ -311,6 +361,34 @@ impl Waveform {
     /// Height in decibels or linear (a setting).
     pub fn set_decibels(&self, decibels: bool) {
         self.state.borrow_mut().decibels = decibels;
+        self.redraw();
+    }
+
+    /// How the recording is shown (a setting).
+    pub fn set_look(&self, look: Look) {
+        self.state.borrow_mut().look = look;
+        self.redraw();
+    }
+
+    /// The events curve on or off (a setting).
+    pub fn set_events(&self, events: bool) {
+        self.state.borrow_mut().events = events;
+        self.redraw();
+    }
+
+    /// Whether the look or the events curve needs [`Waveform::set_spectrum`].
+    pub fn needs_spectrum(&self) -> bool {
+        let s = self.state.borrow();
+        s.look != Look::Plain || s.events
+    }
+
+    pub fn has_spectrum(&self) -> bool {
+        self.state.borrow().spectrum.is_some()
+    }
+
+    /// Frequencies of the loaded file (from [`spectrum::start`]).
+    pub fn set_spectrum(&self, spectrum: Arc<Spectrum>) {
+        self.state.borrow_mut().spectrum = Some(spectrum);
         self.redraw();
     }
 
@@ -348,14 +426,17 @@ impl Waveform {
         let mut s = self.state.borrow_mut();
         let done = s.peaks.as_ref().map_or(0, |p| p.done_frames());
         let detail = s.detail.as_ref().map_or(0, |d| d.generation());
+        let spectrum = s.spectrum.as_ref().map_or(0, |sp| sp.done());
         if s.playhead == playhead
             && s.playing == playing
             && s.drawn_done == done
             && s.drawn_detail == detail
+            && s.drawn_spectrum == spectrum
         {
             return;
         }
         s.drawn_detail = detail;
+        s.drawn_spectrum = spectrum;
         if playing && !s.playing {
             s.follow = true;
         }
@@ -811,6 +892,16 @@ fn draw_main(
     let lane_h = (h - LANES_TOP) / channels as f64;
 
     draw_ruler(cr, w, s, &pal)?;
+    let sview = s
+        .spectrum
+        .as_ref()
+        .filter(|_| s.look != Look::Plain || s.events)
+        .map(|sp| sp.read().view(s.view_start, s.frames_per_px, w.max(1.0) as usize));
+    // Until the analysis starts, the waveform stands in.
+    let spectrogram = s.look == Look::Spectrogram && sview.is_some();
+    if spectrogram && let Some(v) = &sview {
+        draw_spectrogram(cr, v, LANES_TOP, w, h - LANES_TOP)?;
+    }
     draw_regions_under(cr, w, h, s)?;
 
     let reader = peaks.read();
@@ -823,7 +914,8 @@ fn draw_main(
         d.want(s.view_start, s.view_start + s.visible_frames());
     }
     let detail = detail.map(|d| d.read());
-    for ch in 0..channels {
+    let colored = sview.as_ref().filter(|_| s.look == Look::Colored);
+    for ch in (0..channels).filter(|_| !spectrogram) {
         let top = LANES_TOP + lane_h * ch as f64;
         let mid = top + lane_h / 2.0;
         let half = lane_h / 2.0 - 2.0;
@@ -835,7 +927,10 @@ fn draw_main(
         cr.rectangle(0.0, top.floor(), w, 1.0);
         cr.fill()?;
 
-        set_color(cr, &pal.fg, 0.75);
+        match colored {
+            Some(v) => cr.set_source(color_gradient(v, &pal.fg, w))?,
+            None => set_color(cr, &pal.fg, 0.75),
+        }
         if s.detailed {
             let points = columns(&reader, detail.as_ref(), ch, s.view_start, s.frames_per_px, w);
             fill_columns(cr, &scaled(points, s.decibels), mid, half)?;
@@ -846,9 +941,16 @@ fn draw_main(
     }
     drop(detail);
     drop(reader);
+    if s.events && let Some(v) = &sview {
+        draw_events(cr, v, LANES_TOP + 4.0, w, h - LANES_TOP - 8.0)?;
+    }
 
     // Part of the file not analysed yet.
-    let done_x = s.x_of(peaks.done_frames());
+    let analysed = match (&s.spectrum, s.look) {
+        (Some(sp), Look::Spectrogram) => sp.done_frames(),
+        _ => peaks.done_frames(),
+    };
+    let done_x = s.x_of(analysed);
     if done_x < w {
         set_color(cr, &pal.fg, 0.04);
         cr.rectangle(done_x.max(0.0), LANES_TOP, w, h);
@@ -1039,11 +1141,22 @@ fn draw_overview(
         cr.fill()?;
     }
 
+    let sview = s
+        .spectrum
+        .as_ref()
+        .filter(|_| s.look == Look::Colored || s.events)
+        .map(|sp| sp.read().view(0.0, per_px, w.max(1.0) as usize));
     let reader = peaks.read();
-    set_color(cr, &pal.fg, 0.45);
+    match sview.as_ref().filter(|_| s.look == Look::Colored) {
+        Some(v) => cr.set_source(color_gradient(v, &pal.fg, w))?,
+        None => set_color(cr, &pal.fg, 0.45),
+    }
     let points = envelope(&reader, 0..peaks.channels, 0.0, per_px, w);
     fill_envelope(cr, &scaled(points, s.decibels), mid, mid - 2.0)?;
     drop(reader);
+    if s.events && let Some(v) = &sview {
+        draw_events(cr, v, 2.0, w, h - 4.0)?;
+    }
 
     for m in &s.markup.markers {
         set_color(cr, &color_rgba(m.color), 0.9);
@@ -1066,6 +1179,119 @@ fn draw_overview(
     cr.rectangle((s.playhead as f64 / per_px).floor(), 0.0, 2.0, h);
     cr.fill()?;
     Ok(())
+}
+
+/// The spectrogram of `v` over `[0, w) × [top, top + height)`, low
+/// frequencies at the bottom.
+fn draw_spectrogram(
+    cr: &cairo::Context,
+    v: &SpectrumView,
+    top: f64,
+    w: f64,
+    height: f64,
+) -> Result<(), cairo::Error> {
+    let cols = v.columns.max(1);
+    let bands = spectrum::BANDS;
+    let map = colormap();
+    let mut img = cairo::ImageSurface::create(cairo::Format::Rgb24, cols as i32, bands as i32)?;
+    let stride = img.stride() as usize;
+    {
+        let mut data = img.data().map_err(|_| cairo::Error::SurfaceFinished)?;
+        for x in 0..v.columns {
+            for b in 0..bands {
+                let c = map[usize::from(v.levels[x * bands + b])];
+                let at = (bands - 1 - b) * stride + x * 4;
+                data[at..at + 4].copy_from_slice(&c.to_ne_bytes());
+            }
+        }
+    }
+    cr.save()?;
+    cr.rectangle(0.0, top, w, height);
+    cr.clip();
+    cr.translate(0.0, top);
+    cr.scale(w / cols as f64, height / bands as f64);
+    cr.set_source_surface(&img, 0.0, 0.0)?;
+    cr.source().set_filter(cairo::Filter::Good);
+    cr.paint()?;
+    cr.restore()
+}
+
+fn colormap() -> &'static [u32; 256] {
+    static MAP: std::sync::OnceLock<[u32; 256]> = std::sync::OnceLock::new();
+    MAP.get_or_init(spectrum::colormap)
+}
+
+/// A horizontal gradient through the colours of `v`, one stop per pixel;
+/// `fallback` where they are not computed yet.
+fn color_gradient(v: &SpectrumView, fallback: &gdk::RGBA, w: f64) -> cairo::LinearGradient {
+    let g = cairo::LinearGradient::new(0.0, 0.0, w.max(1.0), 0.0);
+    let n = v.columns.max(1) as f64;
+    for (x, c) in v.colors.iter().enumerate() {
+        let off = (x as f64 + 0.5) / n;
+        match c {
+            Some(c) => g.add_color_stop_rgba(
+                off,
+                f64::from(c >> 16 & 0xff) / 255.0,
+                f64::from(c >> 8 & 0xff) / 255.0,
+                f64::from(c & 0xff) / 255.0,
+                0.95,
+            ),
+            None => g.add_color_stop_rgba(
+                off,
+                f64::from(fallback.red()),
+                f64::from(fallback.green()),
+                f64::from(fallback.blue()),
+                0.6,
+            ),
+        }
+    }
+    g
+}
+
+/// Colour of the events curve: reads over the waveform and the spectrogram.
+const EVENTS_RGB: (f64, f64, f64) = (0.25, 0.9, 1.0);
+
+/// The events curve of `v` over `[0, w) × [top, top + height)`, rising from
+/// the bottom, with a light fill under it.
+fn draw_events(
+    cr: &cairo::Context,
+    v: &SpectrumView,
+    top: f64,
+    w: f64,
+    height: f64,
+) -> Result<(), cairo::Error> {
+    let step = w / v.columns.max(1) as f64;
+    let bottom = top + height;
+    let mut run: Vec<(f64, f64)> = Vec::new();
+    let (r, g, b) = EVENTS_RGB;
+    let flush = |run: &mut Vec<(f64, f64)>| -> Result<(), cairo::Error> {
+        if run.len() >= 2 {
+            cr.move_to(run[0].0, bottom);
+            for &(x, y) in run.iter() {
+                cr.line_to(x, y);
+            }
+            cr.line_to(run[run.len() - 1].0, bottom);
+            cr.close_path();
+            cr.set_source_rgba(r, g, b, 0.15);
+            cr.fill()?;
+            cr.move_to(run[0].0, run[0].1);
+            for &(x, y) in &run[1..] {
+                cr.line_to(x, y);
+            }
+            cr.set_source_rgba(r, g, b, 0.95);
+            cr.set_line_width(1.5);
+            cr.stroke()?;
+        }
+        run.clear();
+        Ok(())
+    };
+    for (i, e) in v.events.iter().enumerate() {
+        match e {
+            Some(e) => run.push(((i as f64 + 0.5) * step, bottom - f64::from(*e) * height)),
+            None => flush(&mut run)?,
+        }
+    }
+    flush(&mut run)
 }
 
 /// `h:mm:ss`, `m:ss`, with milliseconds when `fine`.

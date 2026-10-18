@@ -9,6 +9,7 @@ use relm4::{
 };
 
 use super::editor::{Editor, EditorMsg, EditorOutput, StepKind};
+use super::waveform::Look;
 use super::file_tree::{FileTree, FileTreeInput, FileTreeOutput};
 use super::processing::{Processing, ProcessingMsg};
 use super::review::{Review, ReviewMsg, ReviewOutput};
@@ -35,6 +36,8 @@ pub struct App {
     share: Option<remote::Share>,
     /// Starting a share (connecting to a relay takes a few seconds).
     sharing: bool,
+    /// The look and events settings, kept in step with the editor's button.
+    wave_look: Option<(gtk::DropDown, gtk::CheckButton)>,
 }
 
 #[derive(Debug)]
@@ -64,6 +67,11 @@ pub enum AppMsg {
     WaveStyle(u32),
     /// 0 = linear height, 1 = decibels.
     WaveScale(u32),
+    /// Index into [`Look::ALL`].
+    WaveLook(u32),
+    WaveEvents(bool),
+    /// Picked with the editor's button.
+    LookChanged(Look, bool),
     /// Open this folder to another Sample Creator (phone) over iroh.
     Share(PathBuf),
     ShareReady(SharedFolder),
@@ -170,6 +178,18 @@ impl SimpleComponent for App {
                                     set_selected: u32::from(
                                         model.library.setting("wave_scale").as_deref() == Some("db"),
                                     ),
+                                },
+                                #[name = "wave_look"]
+                                gtk::DropDown::from_strings(&Look::ALL.map(Look::label)) {
+                                    set_selected: Look::ALL
+                                        .iter()
+                                        .position(|&l| l == Look::from_setting(model.library.setting("wave_view").as_deref()))
+                                        .unwrap_or(0) as u32,
+                                },
+                                #[name = "wave_events"]
+                                gtk::CheckButton {
+                                    set_label: Some(tr("Кривая событий", "Events curve")),
+                                    set_active: model.library.setting("wave_events").as_deref() == Some("on"),
                                 },
                                 gtk::Label {
                                     set_label: tr(
@@ -348,6 +368,7 @@ impl SimpleComponent for App {
                 .launch((player, library))
                 .forward(sender.input_sender(), |out| match out {
                     EditorOutput::Changed(path) => AppMsg::FileChanged(path),
+                    EditorOutput::Look(look, events) => AppMsg::LookChanged(look, events),
                 });
 
         let mut model = App {
@@ -363,6 +384,7 @@ impl SimpleComponent for App {
             toasts: adw::ToastOverlay::new(),
             share: None,
             sharing: false,
+            wave_look: None,
         };
         let widgets = view_output!();
         model.view_stack = widgets.view_stack.clone();
@@ -416,6 +438,16 @@ impl SimpleComponent for App {
             s.input(AppMsg::WaveStyle(d.selected()));
             popover.popdown();
         });
+        model.wave_look = Some((widgets.wave_look.clone(), widgets.wave_events.clone()));
+        let (s, popover) = (sender.clone(), widgets.settings_popover.clone());
+        widgets.wave_look.connect_selected_notify(move |d| {
+            s.input(AppMsg::WaveLook(d.selected()));
+            popover.popdown();
+        });
+        let s = sender.clone();
+        widgets
+            .wave_events
+            .connect_toggled(move |c| s.input(AppMsg::WaveEvents(c.is_active())));
         let (s, popover) = (sender.clone(), widgets.settings_popover.clone());
         widgets.wave_scale.connect_selected_notify(move |d| {
             s.input(AppMsg::WaveScale(d.selected()));
@@ -504,6 +536,22 @@ impl SimpleComponent for App {
                     eprintln!("wave scale: {err:#}");
                 }
                 self.editor.emit(EditorMsg::WaveDecibels(db));
+            }
+            AppMsg::WaveLook(i) => {
+                let look = Look::ALL.get(i as usize).copied().unwrap_or_default();
+                self.editor.emit(EditorMsg::WaveLook(look));
+            }
+            AppMsg::WaveEvents(on) => self.editor.emit(EditorMsg::WaveEvents(on)),
+            AppMsg::LookChanged(look, events) => {
+                if let Some((dd, check)) = &self.wave_look {
+                    let i = Look::ALL.iter().position(|&l| l == look).unwrap_or(0) as u32;
+                    if dd.selected() != i {
+                        dd.set_selected(i);
+                    }
+                    if check.is_active() != events {
+                        check.set_active(events);
+                    }
+                }
             }
             AppMsg::WaveStyle(i) => {
                 let detailed = i == 1;

@@ -20,6 +20,13 @@
   takes the whole height. Files, markers and regions, undo and redo moved to
   the top of the left rail above the tabs, and the recording's name to the
   head of the right panel.
+- Waveform view: waveform, spectrogram or coloured waveform, plus an
+  "Events curve" on top. Switched with a button in the transport row (desktop
+  and phone) and in the settings. The spectrogram shows frequencies over
+  time, so a quack stands out of running water even at the same loudness;
+  the coloured waveform is red where the sound is low, green in the middle,
+  blue high; the curve rises where the sound changes. The analysis runs in
+  the background the first time and is cached.
 - Phone: the grips on the edges of a selection or region are at the top of
   the wave now, so the floating controls no longer cover them.
 - The file list opens with the current recording in the middle, not at the

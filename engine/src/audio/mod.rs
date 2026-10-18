@@ -3,6 +3,7 @@ pub mod decode;
 pub mod detail;
 pub mod peaks;
 pub mod player;
+pub mod spectrum;
 
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};

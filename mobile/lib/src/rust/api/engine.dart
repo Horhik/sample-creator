@@ -63,6 +63,28 @@ PeaksView waveDetail({
 PlatformInt64 detailGeneration() =>
     RustLib.instance.api.crateApiEngineDetailGeneration();
 
+/// The spectrogram, waveform colours and events curve of `columns` equal
+/// slices of frames `[start, end)`. The first call for a recording starts the
+/// analysis in the background ([`spectrum_done`] grows as it goes).
+SpectrumData spectrumView({
+  required double start,
+  required double end,
+  required int columns,
+}) => RustLib.instance.api.crateApiEngineSpectrumView(
+  start: start,
+  end: end,
+  columns: columns,
+);
+
+/// Columns of the open recording analysed so far: the view redraws when it
+/// changes. 0 before the analysis is started.
+PlatformInt64 spectrumDone() =>
+    RustLib.instance.api.crateApiEngineSpectrumDone();
+
+/// Spectrogram colours, `0xAARRGGBB` per brightness 0..=255.
+Uint32List spectrumColormap() =>
+    RustLib.instance.api.crateApiEngineSpectrumColormap();
+
 MarkupView markup() => RustLib.instance.api.crateApiEngineMarkup();
 
 Future<PlatformInt64> addMarker({
@@ -430,4 +452,51 @@ class RegionView {
           keepPitch == other.keepPitch &&
           gain == other.gain &&
           normalize == other.normalize;
+}
+
+/// Frequencies of a stretch of the open recording, one entry per column.
+class SpectrumData {
+  /// Fraction of the file already analysed, 0..=1.
+  final double done;
+
+  /// Bands per column (lowest first).
+  final int bands;
+
+  /// `column * bands + band`: brightness 0..=255, an index into
+  /// [`spectrum_colormap`].
+  final Uint8List levels;
+
+  /// Colour of the coloured waveform per column, `0xAARRGGBB`; 0 where not
+  /// analysed yet.
+  final Uint32List colors;
+
+  /// The events curve per column, 0..=1; NaN where not analysed yet.
+  final Float32List events;
+
+  const SpectrumData({
+    required this.done,
+    required this.bands,
+    required this.levels,
+    required this.colors,
+    required this.events,
+  });
+
+  @override
+  int get hashCode =>
+      done.hashCode ^
+      bands.hashCode ^
+      levels.hashCode ^
+      colors.hashCode ^
+      events.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SpectrumData &&
+          runtimeType == other.runtimeType &&
+          done == other.done &&
+          bands == other.bands &&
+          levels == other.levels &&
+          colors == other.colors &&
+          events == other.events;
 }

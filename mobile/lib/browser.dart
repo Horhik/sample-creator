@@ -16,8 +16,15 @@ import 'waveform.dart'
         friendlyError,
         setWaveDecibels,
         setWaveDetailed,
+        setWaveEvents,
+        setWaveLook,
+        WaveLook,
         waveDecibels,
-        waveDetailed;
+        waveDetailed,
+        waveEvents,
+        waveLook,
+        waveLookLabel;
+import 'wave_look.dart' show waveLookHint;
 
 const _storage = MethodChannel('sample_creator/storage');
 
@@ -483,6 +490,38 @@ class FileBrowserState extends State<FileBrowser> {
               ),
               value: on,
               onChanged: setWaveDecibels,
+            ),
+          ),
+          ValueListenableBuilder(
+            valueListenable: waveLook,
+            builder: (context, look, _) => ListTile(
+              leading: const Icon(Icons.gradient),
+              title: Text(tr('Вид волны', 'Waveform view')),
+              subtitle: Text(waveLookHint()),
+              trailing: DropdownButton<WaveLook>(
+                value: look,
+                underline: const SizedBox(),
+                onChanged: (l) => l == null ? null : setWaveLook(l),
+                items: [
+                  for (final l in WaveLook.values)
+                    DropdownMenuItem(value: l, child: Text(waveLookLabel(l))),
+                ],
+              ),
+            ),
+          ),
+          ValueListenableBuilder(
+            valueListenable: waveEvents,
+            builder: (context, on, _) => SwitchListTile(
+              secondary: const Icon(Icons.show_chart),
+              title: Text(tr('Кривая событий', 'Events curve')),
+              subtitle: Text(
+                tr(
+                  'Поднимается там, где звук меняется',
+                  'Rises where the sound changes',
+                ),
+              ),
+              value: on,
+              onChanged: setWaveEvents,
             ),
           ),
           ValueListenableBuilder(

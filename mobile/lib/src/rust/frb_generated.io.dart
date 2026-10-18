@@ -119,6 +119,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Int64List dco_decode_list_prim_i_64_strict(dynamic raw);
 
   @protected
+  Uint32List dco_decode_list_prim_u_32_strict(dynamic raw);
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
@@ -165,6 +168,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ReviewRegion dco_decode_review_region(dynamic raw);
+
+  @protected
+  SpectrumData dco_decode_spectrum_data(dynamic raw);
 
   @protected
   SyncInfo dco_decode_sync_info(dynamic raw);
@@ -286,6 +292,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Int64List sse_decode_list_prim_i_64_strict(SseDeserializer deserializer);
 
   @protected
+  Uint32List sse_decode_list_prim_u_32_strict(SseDeserializer deserializer);
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
@@ -336,6 +345,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ReviewRegion sse_decode_review_region(SseDeserializer deserializer);
+
+  @protected
+  SpectrumData sse_decode_spectrum_data(SseDeserializer deserializer);
 
   @protected
   SyncInfo sse_decode_sync_info(SseDeserializer deserializer);
@@ -488,6 +500,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_prim_u_32_strict(
+    Uint32List self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_prim_u_8_strict(
     Uint8List self,
     SseSerializer serializer,
@@ -552,6 +570,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_review_region(ReviewRegion self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_spectrum_data(SpectrumData self, SseSerializer serializer);
 
   @protected
   void sse_encode_sync_info(SyncInfo self, SseSerializer serializer);

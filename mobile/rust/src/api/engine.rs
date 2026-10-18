@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
 use flutter_rust_bridge::frb;
-use sample_creator_engine::audio::{self, detail::Detail, peaks, player::Player};
+use sample_creator_engine::audio::{self, detail::Detail, peaks, player::Player, spectrum};
 use sample_creator_engine::core::history::{Change, History};
 use sample_creator_engine::core::{ChannelMode, Marker, PALETTE, Region, color_name};
 use sample_creator_engine::recording::{self, Recording};
@@ -128,6 +128,7 @@ pub fn open_file(path: String) -> Result<FileInfo> {
         history: History::default(),
         peaks: job,
         detail,
+        spectrum: None,
     });
     Ok(info)
 }
@@ -269,6 +270,63 @@ pub fn wave_detail(start: f64, end: f64, columns: u32) -> Result<PeaksView> {
 #[frb(sync)]
 pub fn detail_generation() -> i64 {
     with_open(|open, _| Ok(open.detail.generation() as i64)).unwrap_or(0)
+}
+
+/// Frequencies of a stretch of the open recording, one entry per column.
+pub struct SpectrumData {
+    /// Fraction of the file already analysed, 0..=1.
+    pub done: f64,
+    /// Bands per column (lowest first).
+    pub bands: u32,
+    /// `column * bands + band`: brightness 0..=255, an index into
+    /// [`spectrum_colormap`].
+    pub levels: Vec<u8>,
+    /// Colour of the coloured waveform per column, `0xAARRGGBB`; 0 where not
+    /// analysed yet.
+    pub colors: Vec<u32>,
+    /// The events curve per column, 0..=1; NaN where not analysed yet.
+    pub events: Vec<f32>,
+}
+
+/// The spectrogram, waveform colours and events curve of `columns` equal
+/// slices of frames `[start, end)`. The first call for a recording starts the
+/// analysis in the background ([`spectrum_done`] grows as it goes).
+#[frb(sync)]
+pub fn spectrum_view(start: f64, end: f64, columns: u32) -> Result<SpectrumData> {
+    with_open(|open, _| {
+        let info = &open.rec.info;
+        let job = open.spectrum.get_or_insert_with(|| {
+            spectrum::start(&open.rec.path, info.sample_rate, info.total_frames)
+        });
+        let sp = &job.spectrum;
+        let columns = columns.max(1) as usize;
+        let v = sp.read().view(start, (end - start) / columns as f64, columns);
+        Ok(SpectrumData {
+            done: sp.done_frames() as f64 / info.total_frames.max(1) as f64,
+            bands: spectrum::BANDS as u32,
+            levels: v.levels,
+            colors: v
+                .colors
+                .iter()
+                .map(|c| c.map_or(0, |c| 0xff00_0000 | c))
+                .collect(),
+            events: v.events.iter().map(|e| e.unwrap_or(f32::NAN)).collect(),
+        })
+    })
+}
+
+/// Columns of the open recording analysed so far: the view redraws when it
+/// changes. 0 before the analysis is started.
+#[frb(sync)]
+pub fn spectrum_done() -> i64 {
+    with_open(|open, _| Ok(open.spectrum.as_ref().map_or(0, |j| j.spectrum.done() as i64)))
+        .unwrap_or(0)
+}
+
+/// Spectrogram colours, `0xAARRGGBB` per brightness 0..=255.
+#[frb(sync)]
+pub fn spectrum_colormap() -> Vec<u32> {
+    spectrum::colormap().iter().map(|c| 0xff00_0000 | c).collect()
 }
 
 // ---- Markup ----

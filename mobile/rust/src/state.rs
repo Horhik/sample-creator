@@ -30,6 +30,8 @@ pub struct Open {
     pub peaks: peaks::PeakJob,
     /// Samples of the visible stretch, for the detailed waveform.
     pub detail: sample_creator_engine::audio::detail::Detail,
+    /// Frequencies over time; started when a view first asks for them.
+    pub spectrum: Option<sample_creator_engine::audio::spectrum::SpectrumJob>,
 }
 
 pub static STATE: OnceLock<State> = OnceLock::new();

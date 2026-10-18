@@ -12,10 +12,11 @@ use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, SimpleComponent};
 
 use super::context_menu;
 use super::markup_list::{ListEvent, MarkupList};
-use super::waveform::{WaveEvent, Waveform, format_time};
+use super::waveform::{Look, WaveEvent, Waveform, format_time};
 use crate::audio::decode::AudioInfo;
 use crate::audio::detail::Detail;
 use crate::audio::peaks::{self, PeakJob};
+use crate::audio::spectrum::{self, SpectrumJob};
 use crate::audio::player::{MONITOR_MAX_DB, MONITOR_MIN_DB, Player};
 use crate::core::history::{Change, History};
 use crate::core::{ChannelMode, ColorIdx, Id, Item, Marker, Markup, PALETTE, Region};
@@ -29,6 +30,8 @@ struct Loaded {
     record: FileRecord,
     markup: Markup,
     _peaks: PeakJob,
+    /// Started when the look or the events curve first needs it.
+    spectrum: Option<SpectrumJob>,
 }
 
 pub struct Editor {
@@ -63,6 +66,9 @@ pub struct Editor {
     title: gtk::EditableLabel,
     /// "?" button with the full list of keys.
     help: gtk::MenuButton,
+    look: Look,
+    events: bool,
+    look_menu: LookMenu,
 }
 
 #[derive(Debug)]
@@ -76,6 +82,10 @@ pub enum EditorMsg {
     WaveDetailed(bool),
     /// Waveform height in decibels (true) or linear; a setting.
     WaveDecibels(bool),
+    /// Waveform, spectrogram or coloured waveform; a setting.
+    WaveLook(Look),
+    /// The events curve on or off; a setting.
+    WaveEvents(bool),
     /// Listening volume in dB, for everything played (not exported).
     ListeningDb(f64),
     ZoomIn,
@@ -124,6 +134,8 @@ pub enum StepKind {
 pub enum EditorOutput {
     /// Markup or review state of this file changed (for the file tree).
     Changed(PathBuf),
+    /// The look was picked in the editor (for the settings menu).
+    Look(Look, bool),
 }
 
 #[relm4::component(pub)]
@@ -293,6 +305,7 @@ impl SimpleComponent for Editor {
                                     },
                                 },
                             },
+                            append: &model.look_menu.button.clone(),
                             gtk::Button {
                                 set_icon_name: "zoom-out-symbolic",
                                 set_tooltip_text: Some(tr("Отдалить (−)", "Zoom out (−)")),
@@ -363,6 +376,11 @@ impl SimpleComponent for Editor {
         let waveform = Waveform::new();
         waveform.set_detailed(library.setting("waveform").as_deref() == Some("detailed"));
         waveform.set_decibels(library.setting("wave_scale").as_deref() == Some("db"));
+        let look = Look::from_setting(library.setting("wave_view").as_deref());
+        let events = library.setting("wave_events").as_deref() == Some("on");
+        waveform.set_look(look);
+        waveform.set_events(events);
+        let look_menu = LookMenu::new(sender.input_sender(), look, events);
         let s = sender.input_sender().clone();
         waveform.connect_event(move |e| s.emit(EditorMsg::Wave(e)));
         let list = MarkupList::new();
@@ -395,6 +413,9 @@ impl SimpleComponent for Editor {
             list,
             toasts: adw::ToastOverlay::new(),
             help: help_button(),
+            look,
+            events,
+            look_menu,
             title: gtk::EditableLabel::builder()
                 .css_classes(["title-4"])
                 .tooltip_text(tr(
@@ -459,6 +480,30 @@ impl SimpleComponent for Editor {
             }
             EditorMsg::WaveDecibels(on) => {
                 self.waveform.set_decibels(on);
+                false
+            }
+            EditorMsg::WaveLook(look) => {
+                if look != self.look {
+                    self.look = look;
+                    self.library.set_setting("wave_view", look.setting()).ok();
+                    self.waveform.set_look(look);
+                    self.look_menu.show(look, self.events);
+                    self.ensure_spectrum();
+                    sender.output(EditorOutput::Look(look, self.events)).ok();
+                }
+                false
+            }
+            EditorMsg::WaveEvents(on) => {
+                if on != self.events {
+                    self.events = on;
+                    self.library
+                        .set_setting("wave_events", if on { "on" } else { "off" })
+                        .ok();
+                    self.waveform.set_events(on);
+                    self.look_menu.show(self.look, on);
+                    self.ensure_spectrum();
+                    sender.output(EditorOutput::Look(self.look, on)).ok();
+                }
                 false
             }
             EditorMsg::ListeningDb(db) => {
@@ -677,6 +722,7 @@ impl Editor {
                     p.load(path);
                 }
                 self.file = Some(loaded);
+                self.ensure_spectrum();
                 self.resume();
                 self.title.set_text(&self.display_name());
                 self.sync_markup();
@@ -695,7 +741,19 @@ impl Editor {
             record: rec.record,
             markup: rec.markup,
             _peaks: job,
+            spectrum: None,
         })
+    }
+
+    /// Starts the frequency analysis of the open file once something shows it.
+    fn ensure_spectrum(&mut self) {
+        let Some(f) = &mut self.file else { return };
+        if f.spectrum.is_some() || !self.waveform.needs_spectrum() {
+            return;
+        }
+        let job = spectrum::start(&f.path, f.info.sample_rate, f.info.total_frames);
+        self.waveform.set_spectrum(job.spectrum.clone());
+        f.spectrum = Some(job);
     }
 
     fn reattach(&mut self) {
@@ -1531,6 +1589,92 @@ fn all_keys() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
             ],
         ),
     ]
+}
+
+/// Transport button that picks the look and the events curve.
+struct LookMenu {
+    button: gtk::MenuButton,
+    looks: Vec<(Look, gtk::CheckButton)>,
+    events: gtk::CheckButton,
+}
+
+impl LookMenu {
+    fn new(input: &relm4::Sender<EditorMsg>, look: Look, events: bool) -> Self {
+        let list = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(2)
+            .margin_start(6)
+            .margin_end(6)
+            .margin_top(6)
+            .margin_bottom(6)
+            .build();
+        list.append(
+            &gtk::Label::builder()
+                .label(tr("Вид", "View"))
+                .css_classes(["heading"])
+                .xalign(0.0)
+                .build(),
+        );
+        let mut looks: Vec<(Look, gtk::CheckButton)> = Vec::new();
+        for l in Look::ALL {
+            let check = gtk::CheckButton::with_label(l.label());
+            if let Some((_, first)) = looks.first() {
+                check.set_group(Some(first));
+            }
+            check.set_active(l == look);
+            let input = input.clone();
+            check.connect_toggled(move |c| {
+                if c.is_active() {
+                    input.emit(EditorMsg::WaveLook(l));
+                }
+            });
+            list.append(&check);
+            looks.push((l, check));
+        }
+        let curve = gtk::CheckButton::with_label(tr("Кривая событий", "Events curve"));
+        curve.set_active(events);
+        curve.set_margin_top(6);
+        let i = input.clone();
+        curve.connect_toggled(move |c| i.emit(EditorMsg::WaveEvents(c.is_active())));
+        list.append(&curve);
+        list.append(
+            &gtk::Label::builder()
+                .label(tr(
+                    "Спектрограмма — частоты во времени, низкие внизу. Цветная волна: красный — низкие, зелёный — средние, синий — высокие. Кривая поднимается там, где звук меняется.",
+                    "Spectrogram: frequencies over time, low at the bottom. Coloured waveform: red low, green middle, blue high. The curve rises where the sound changes.",
+                ))
+                .css_classes(["dim-label", "caption"])
+                .xalign(0.0)
+                .wrap(true)
+                .max_width_chars(30)
+                .margin_top(6)
+                .build(),
+        );
+        let popover = gtk::Popover::builder().child(&list).build();
+        let button = gtk::MenuButton::builder()
+            .icon_name("preferences-color-symbolic")
+            .tooltip_text(tr("Вид волны", "Waveform view"))
+            .css_classes(["flat"])
+            .popover(&popover)
+            .build();
+        LookMenu {
+            button,
+            looks,
+            events: curve,
+        }
+    }
+
+    /// Reflects a choice made elsewhere (the settings menu).
+    fn show(&self, look: Look, events: bool) {
+        for (l, check) in &self.looks {
+            if *l == look && !check.is_active() {
+                check.set_active(true);
+            }
+        }
+        if self.events.is_active() != events {
+            self.events.set_active(events);
+        }
+    }
 }
 
 fn help_button() -> gtk::MenuButton {

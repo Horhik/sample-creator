@@ -1,4 +1,6 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -72,10 +74,18 @@ class WavePainter extends CustomPainter {
     required this.sampleRate,
     required this.accent,
     this.detailed = false,
+    this.spectrum,
+    this.look = WaveLook.plain,
+    this.events = false,
   });
 
   /// Columns are one per pixel; drawn with straight edges.
   final bool detailed;
+
+  /// Frequencies of the view, when the look or the events curve needs them.
+  final engine.SpectrumData? spectrum;
+  final WaveLook look;
+  final bool events;
 
   static const labelHeight = 22.0;
 
@@ -85,6 +95,12 @@ class WavePainter extends CustomPainter {
     final top = labelHeight;
     final laneH = (size.height - top) / channels;
     final columns = peaks.data.length ~/ (channels * 2);
+    final sp = spectrum;
+    // Until the analysis starts, the waveform stands in.
+    final spectrogram = look == WaveLook.spectrogram && sp != null;
+    if (spectrogram) {
+      drawSpectrogram(canvas, sp, Rect.fromLTRB(0, top, w, size.height));
+    }
 
     // Regions under the wave.
     for (final r in markup.regions) {
@@ -141,6 +157,9 @@ class WavePainter extends CustomPainter {
     final wave = Paint()
       ..color = scheme.onSurfaceVariant
       ..strokeWidth = 1;
+    if (look == WaveLook.colored && sp != null) {
+      wave.shader = colorShader(sp, w, scheme.onSurfaceVariant);
+    }
     final mid = Paint()..color = scheme.outlineVariant.withValues(alpha: 0.5);
     for (var ch = 0; ch < channels; ch++) {
       final y0 = top + laneH * ch;
@@ -154,6 +173,7 @@ class WavePainter extends CustomPainter {
           Paint()..color = scheme.outlineVariant,
         );
       }
+      if (spectrogram) continue;
       final (lo, hi) = shownColumnsOf(peaks, channels, channel: ch);
       fillEnvelope(
         canvas,
@@ -167,6 +187,10 @@ class WavePainter extends CustomPainter {
         paint: wave,
         smooth: !detailed,
       );
+    }
+
+    if (events && sp != null) {
+      drawEvents(canvas, sp, Rect.fromLTRB(0, top + 4, w, size.height - 4));
     }
 
     // Markers.
@@ -269,7 +293,11 @@ class OverviewPainter extends CustomPainter {
     required this.markup,
     required this.palette,
     required this.playhead,
+    this.spectrum,
   });
+
+  /// Colours and events of the whole file, when they are shown.
+  final engine.SpectrumData? spectrum;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -303,8 +331,15 @@ class OverviewPainter extends CustomPainter {
       width: w,
       mid: h / 2,
       amp: (h - 6) / 2,
-      paint: Paint()..color = scheme.onSurfaceVariant.withValues(alpha: 0.6),
+      paint: Paint()
+        ..color = scheme.onSurfaceVariant.withValues(alpha: 0.6)
+        ..shader = spectrum != null && waveLook.value == WaveLook.colored
+            ? colorShader(spectrum!, w, scheme.onSurfaceVariant)
+            : null,
     );
+    if (spectrum != null && waveEvents.value) {
+      drawEvents(canvas, spectrum!, Rect.fromLTRB(0, 2, w, h - 2));
+    }
 
     final frame = Rect.fromLTRB(
       xOf(view.start).clamp(0, w),
@@ -423,11 +458,179 @@ final waveDecibels = ValueNotifier<bool>(false);
 void loadWaveStyle() {
   waveDetailed.value = review.getSetting(key: 'mobile.waveform') == 'detailed';
   waveDecibels.value = review.getSetting(key: 'mobile.wave_scale') == 'db';
+  final look = review.getSetting(key: 'mobile.wave_view');
+  waveLook.value = WaveLook.values.firstWhere(
+    (l) => l.name == look,
+    orElse: () => WaveLook.plain,
+  );
+  waveEvents.value = review.getSetting(key: 'mobile.wave_events') == 'on';
 }
 
 void setWaveDecibels(bool on) {
   waveDecibels.value = on;
   review.setSetting(key: 'mobile.wave_scale', value: on ? 'db' : 'linear');
+}
+
+/// How the recording is shown (a setting).
+enum WaveLook {
+  /// Loudness only.
+  plain,
+
+  /// Frequencies over time instead of the waveform.
+  spectrogram,
+
+  /// The waveform coloured by where its energy sits: red low, green middle,
+  /// blue high.
+  colored,
+}
+
+String waveLookLabel(WaveLook l) => switch (l) {
+  WaveLook.plain => tr('Волна', 'Waveform'),
+  WaveLook.spectrogram => tr('Спектрограмма', 'Spectrogram'),
+  WaveLook.colored => tr('Цветная волна', 'Coloured waveform'),
+};
+
+final waveLook = ValueNotifier<WaveLook>(WaveLook.plain);
+
+/// A curve rising where the sound changes (a setting).
+final waveEvents = ValueNotifier<bool>(false);
+
+/// Whether the look or the events curve needs `engine.spectrumView`.
+bool get waveNeedsSpectrum =>
+    waveLook.value != WaveLook.plain || waveEvents.value;
+
+void setWaveLook(WaveLook l) {
+  waveLook.value = l;
+  review.setSetting(key: 'mobile.wave_view', value: l.name);
+}
+
+void setWaveEvents(bool on) {
+  waveEvents.value = on;
+  review.setSetting(key: 'mobile.wave_events', value: on ? 'on' : 'off');
+}
+
+Int32List? _colormap;
+
+/// Spectrogram colours by brightness (from the engine, like the desktop).
+Int32List get spectrumColormap => _colormap ??= Int32List.fromList(
+  engine.spectrumColormap().map((c) => c.toSigned(32)).toList(),
+);
+
+/// Most columns a spectrogram is drawn with (vertex indices are 16-bit).
+const maxSpectrumColumns = 1000;
+
+/// The spectrogram of `d` over `r`, low frequencies at the bottom: a grid of
+/// vertices at the cell centres, colours blended between them.
+void drawSpectrogram(Canvas canvas, engine.SpectrumData d, Rect r) {
+  final bands = d.bands;
+  final cols = d.levels.length ~/ math.max(bands, 1);
+  if (cols < 2 || bands < 2) return;
+  final map = spectrumColormap;
+  final positions = Float32List(cols * bands * 2);
+  final colors = Int32List(cols * bands);
+  final dx = r.width / cols, dy = r.height / bands;
+  for (var x = 0; x < cols; x++) {
+    final px = x == 0
+        ? r.left
+        : x == cols - 1
+        ? r.right
+        : r.left + (x + 0.5) * dx;
+    for (var b = 0; b < bands; b++) {
+      final py = b == 0
+          ? r.bottom
+          : b == bands - 1
+          ? r.top
+          : r.bottom - (b + 0.5) * dy;
+      final i = x * bands + b;
+      positions[i * 2] = px;
+      positions[i * 2 + 1] = py;
+      colors[i] = map[d.levels[i]];
+    }
+  }
+  final vertices = ui.Vertices.raw(
+    VertexMode.triangles,
+    positions,
+    colors: colors,
+    indices: _gridIndices(cols, bands),
+  );
+  // dst: the vertex colours alone, the paint adds nothing.
+  canvas.drawVertices(vertices, BlendMode.dst, Paint());
+}
+
+final _indices = <(int, int), Uint16List>{};
+
+Uint16List _gridIndices(int cols, int bands) =>
+    _indices.putIfAbsent((cols, bands), () {
+      final out = Uint16List((cols - 1) * (bands - 1) * 6);
+      var k = 0;
+      for (var x = 0; x < cols - 1; x++) {
+        for (var b = 0; b < bands - 1; b++) {
+          final a = x * bands + b, c = a + bands;
+          out.setAll(k, [a, c, a + 1, a + 1, c, c + 1]);
+          k += 6;
+        }
+      }
+      return out;
+    });
+
+/// A horizontal gradient through the colours of `d` across `width`;
+/// `fallback` where they are not analysed yet.
+Shader colorShader(engine.SpectrumData d, double width, Color fallback) {
+  final n = d.colors.length;
+  final colors = <Color>[];
+  final stops = <double>[];
+  for (var i = 0; i < n; i++) {
+    final c = d.colors[i];
+    colors.add(c == 0 ? fallback.withValues(alpha: 0.6) : Color(c));
+    stops.add((i + 0.5) / n);
+  }
+  if (n < 2) {
+    return ui.Gradient.linear(Offset.zero, Offset(width, 0), [
+      fallback,
+      fallback,
+    ]);
+  }
+  return ui.Gradient.linear(Offset.zero, Offset(width, 0), colors, stops);
+}
+
+/// Colour of the events curve: reads over the waveform and the spectrogram.
+const eventsColor = Color(0xFF40E6FF);
+
+/// The events curve of `d` over `r`, rising from the bottom, lightly filled.
+void drawEvents(Canvas canvas, engine.SpectrumData d, Rect r) {
+  final n = d.events.length;
+  if (n == 0) return;
+  final step = r.width / n;
+  final fill = Paint()..color = eventsColor.withValues(alpha: 0.15);
+  final line = Paint()
+    ..color = eventsColor
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.5;
+  final run = <Offset>[];
+  void flush() {
+    if (run.length >= 2) {
+      canvas.drawPath(
+        Path()..addPolygon([
+          Offset(run.first.dx, r.bottom),
+          ...run,
+          Offset(run.last.dx, r.bottom),
+        ], true),
+        fill,
+      );
+      canvas.drawPath(Path()..addPolygon(run, false), line);
+    }
+    run.clear();
+  }
+
+  for (var i = 0; i < n; i++) {
+    final e = d.events[i];
+    if (e.isNaN) {
+      flush();
+    } else {
+      run.add(Offset(r.left + (i + 0.5) * step, r.bottom - e * r.height));
+    }
+  }
+  flush();
 }
 
 /// Bottom of the decibel scale (mirrors `peaks::DB_FLOOR`).
