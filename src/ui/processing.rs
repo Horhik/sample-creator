@@ -411,6 +411,7 @@ impl SimpleComponent for Processing {
             });
             wave.add_controller(motion);
             let st = wave_state.clone();
+            let pointer_for_zoom = pointer.clone();
             let scroll =
                 gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
             scroll.connect_scroll(move |c, dx, dy| {
@@ -430,6 +431,28 @@ impl SimpleComponent for Processing {
                 glib::Propagation::Stop
             });
             wave.add_controller(scroll);
+            // Pinch on a touchpad zooms the strip, like Ctrl+wheel.
+            let zoom = gtk::GestureZoom::new();
+            let started = Rc::new(std::cell::Cell::new(1.0));
+            let s = started.clone();
+            zoom.connect_begin(move |_, _| s.set(1.0));
+            let (st, p) = (wave_state.clone(), pointer_for_zoom);
+            zoom.connect_scale_changed(move |gesture, scale| {
+                if scale <= 0.0 {
+                    return;
+                }
+                let width = gesture
+                    .widget()
+                    .map_or(1.0, |w| f64::from(w.width()).max(1.0));
+                let anchor = gesture
+                    .bounding_box_center()
+                    .map_or(p.get(), |(x, _)| (x / width).clamp(0.0, 1.0));
+                st.borrow_mut().zoom(scale / started.replace(scale), anchor);
+                if let Some(w) = gesture.widget() {
+                    w.queue_draw();
+                }
+            });
+            wave.add_controller(zoom);
             // Follow the result on the timeline (undoing the speed stretch).
             let (st, player) = (wave_state.clone(), player.clone());
             wave.add_tick_callback(move |w, _| {

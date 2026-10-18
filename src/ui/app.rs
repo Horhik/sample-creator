@@ -8,7 +8,7 @@ use relm4::{
     SimpleComponent,
 };
 
-use super::editor::{Editor, EditorMsg, EditorOutput};
+use super::editor::{Editor, EditorMsg, EditorOutput, StepKind};
 use super::file_tree::{FileTree, FileTreeInput, FileTreeOutput};
 use super::processing::{Processing, ProcessingMsg};
 use super::review::{Review, ReviewMsg, ReviewOutput};
@@ -360,6 +360,7 @@ impl SimpleComponent for App {
         window.add_controller(editor_keys(
             &window,
             &widgets.view_stack,
+            model.file_tree.sender().clone(),
             model.editor.sender().clone(),
             model.review.sender().clone(),
             model.processing.sender().clone(),
@@ -734,6 +735,7 @@ fn dir_title(dir: &std::path::Path) -> String {
 fn editor_keys(
     window: &adw::ApplicationWindow,
     stack: &adw::ViewStack,
+    files: relm4::Sender<FileTreeInput>,
     editor: relm4::Sender<EditorMsg>,
     review: relm4::Sender<ReviewMsg>,
     processing: relm4::Sender<ProcessingMsg>,
@@ -797,10 +799,31 @@ fn editor_keys(
         if typing || mods.contains(gdk::ModifierType::ALT_MASK) {
             return glib::Propagation::Proceed;
         }
+        // Moving about the tree, vim-style: J/K over the recordings of the
+        // folder, H/L over the folders themselves. Ctrl+Tab does what J does.
+        let walk = match (ctrl, key.to_lower()) {
+            (false, gdk::Key::j) => Some(FileTreeInput::StepFile(true)),
+            (false, gdk::Key::k) => Some(FileTreeInput::StepFile(false)),
+            (false, gdk::Key::l) => Some(FileTreeInput::StepDir(true)),
+            (false, gdk::Key::h) => Some(FileTreeInput::StepDir(false)),
+            (true, gdk::Key::Tab) => Some(FileTreeInput::StepFile(true)),
+            (true, gdk::Key::ISO_Left_Tab) => Some(FileTreeInput::StepFile(false)),
+            _ => None,
+        };
+        if let Some(walk) = walk {
+            files.emit(walk);
+            return glib::Propagation::Stop;
+        }
         let msg = match (ctrl, key.to_lower()) {
             (true, gdk::Key::z) if shift => EditorMsg::Redo,
             (true, gdk::Key::z) => EditorMsg::Undo,
             (true, gdk::Key::y) => EditorMsg::Redo,
+            // Ctrl+HJKL stays inside the recording: regions sideways, markers
+            // up and down.
+            (true, gdk::Key::l) => EditorMsg::Step(true, StepKind::Region),
+            (true, gdk::Key::h) => EditorMsg::Step(false, StepKind::Region),
+            (true, gdk::Key::j) => EditorMsg::Step(true, StepKind::Marker),
+            (true, gdk::Key::k) => EditorMsg::Step(false, StepKind::Marker),
             (true, _) => return glib::Propagation::Proceed,
 
             (_, gdk::Key::space) => EditorMsg::TogglePlay,
@@ -816,11 +839,11 @@ fn editor_keys(
             (_, gdk::Key::o) => EditorMsg::SetOut,
             (_, gdk::Key::r) => EditorMsg::MakeRegion,
             (_, gdk::Key::e) => EditorMsg::ToggleExport,
-            (_, gdk::Key::l) => EditorMsg::ToggleLoop,
+            (_, gdk::Key::c) => EditorMsg::ToggleLoop,
             (_, gdk::Key::Return | gdk::Key::KP_Enter | gdk::Key::F2) => EditorMsg::RenameSelected,
             (_, gdk::Key::Delete | gdk::Key::BackSpace) => EditorMsg::DeleteSelected,
-            (_, gdk::Key::Tab) => EditorMsg::Step(true),
-            (_, gdk::Key::ISO_Left_Tab) => EditorMsg::Step(false),
+            (_, gdk::Key::Tab) => EditorMsg::Step(true, StepKind::Both),
+            (_, gdk::Key::ISO_Left_Tab) => EditorMsg::Step(false, StepKind::Both),
             (_, gdk::Key::Escape) => EditorMsg::Escape,
             (_, gdk::Key::question | gdk::Key::F1) => EditorMsg::ShowHelp,
             (_, k) => match k.to_unicode().and_then(|c| c.to_digit(10)) {

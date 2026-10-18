@@ -12,7 +12,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::core::history;
 use crate::core::{ChannelMode, Fx, Id, Marker, Markup, Part, Region};
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 pub struct Library {
     conn: Connection,
@@ -263,6 +263,14 @@ impl Library {
                  COMMIT;",
             )?;
         }
+        if version < 8 {
+            conn.execute_batch(
+                "BEGIN;
+                 ALTER TABLE files ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
+                 PRAGMA user_version = 8;
+                 COMMIT;",
+            )?;
+        }
         anyhow::ensure!(
             version <= SCHEMA_VERSION,
             "library was written by a newer version (schema {version})"
@@ -306,6 +314,27 @@ impl Library {
         self.conn.execute(
             "UPDATE files SET reviewed = ?2, updated_at = ?3 WHERE id = ?1",
             params![file, reviewed, now_ms()],
+        )?;
+        Ok(())
+    }
+
+    /// Where listening stopped last time, in frames. Local to this computer:
+    /// it says nothing about the markup, so it is not synced.
+    pub fn position(&self, file: Id) -> Result<u64> {
+        let pos: i64 = self
+            .conn
+            .query_row("SELECT position FROM files WHERE id = ?1", [file], |r| {
+                r.get(0)
+            })
+            .optional()?
+            .unwrap_or(0);
+        Ok(pos.max(0) as u64)
+    }
+
+    pub fn set_position(&self, file: Id, frame: u64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE files SET position = ?2 WHERE id = ?1",
+            params![file, frame as i64],
         )?;
         Ok(())
     }

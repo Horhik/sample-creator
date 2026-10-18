@@ -27,6 +27,8 @@ pub struct FileTree {
     badges: Badges,
     /// A file to select once the view has caught up with the root.
     reveal: RefCell<Option<PathBuf>>,
+    /// A keyboard move through the tree, taken by the view.
+    step: RefCell<Option<Step>>,
     /// Set while selecting a file the editor already has open, so the
     /// selection does not open it again.
     revealing: Rc<std::cell::Cell<bool>>,
@@ -41,6 +43,18 @@ pub enum FileTreeInput {
     Reveal(PathBuf),
     /// From the right-click menu: this folder, or the root when `None`.
     ShareAt(Option<PathBuf>),
+    /// Select the next (`true`) or previous recording in the same folder.
+    StepFile(bool),
+    /// Go to the next (`true`) or previous folder and open the first
+    /// recording in it.
+    StepDir(bool),
+}
+
+/// A keyboard move through the tree.
+#[derive(Clone, Copy)]
+enum Step {
+    File(bool),
+    Dir(bool),
 }
 
 /// Name and badge label of a bound row.
@@ -175,6 +189,7 @@ impl SimpleComponent for FileTree {
                 root: root_dir,
                 badges,
                 reveal: RefCell::new(None),
+                step: RefCell::new(None),
                 revealing,
             },
             widgets,
@@ -186,6 +201,8 @@ impl SimpleComponent for FileTree {
             FileTreeInput::SetRoot(dir) => self.root = dir,
             FileTreeInput::Refresh(path) => self.badges.refresh(&path),
             FileTreeInput::Reveal(path) => *self.reveal.borrow_mut() = Some(path),
+            FileTreeInput::StepFile(forward) => *self.step.borrow_mut() = Some(Step::File(forward)),
+            FileTreeInput::StepDir(forward) => *self.step.borrow_mut() = Some(Step::Dir(forward)),
             FileTreeInput::ShareAt(folder) => {
                 let folder = folder.unwrap_or_else(|| self.root.clone());
                 _sender.output(FileTreeOutput::Share(folder)).ok();
@@ -208,6 +225,9 @@ impl SimpleComponent for FileTree {
             && path.starts_with(&self.root)
         {
             reveal(&widgets.list_view, path, self.revealing.clone());
+        }
+        if let Some(step) = self.step.borrow_mut().take() {
+            walk(&widgets.list_view, step);
         }
     }
 }
@@ -234,7 +254,10 @@ fn share_menu(list_view: &gtk::ListView, sender: &ComponentSender<FileTree>) {
             .label(tr("Поделиться папкой…", "Share folder…"))
             .css_classes(["flat"])
             .build();
-        let popover = gtk::Popover::builder().child(&button).has_arrow(true).build();
+        let popover = gtk::Popover::builder()
+            .child(&button)
+            .has_arrow(true)
+            .build();
         popover.set_parent(&view);
         popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
         let (s, p) = (sender.clone(), popover.clone());
@@ -255,8 +278,7 @@ fn share_menu(list_view: &gtk::ListView, sender: &ComponentSender<FileTree>) {
 /// load asynchronously, so this keeps looking for a couple of seconds.
 fn reveal(list_view: &gtk::ListView, path: PathBuf, revealing: Rc<std::cell::Cell<bool>>) {
     let view = list_view.clone();
-    let mut tries = 0;
-    let step = move || -> bool {
+    poll(move || {
         let Some(selection) = view.model().and_downcast::<gtk::SingleSelection>() else {
             return true;
         };
@@ -264,14 +286,7 @@ fn reveal(list_view: &gtk::ListView, path: PathBuf, revealing: Rc<std::cell::Cel
             let Some(row) = selection.item(i).and_downcast::<gtk::TreeListRow>() else {
                 continue;
             };
-            let Some(p) = row
-                .item()
-                .and_downcast::<gio::FileInfo>()
-                .and_then(|info| file_of(&info))
-                .and_then(|f| f.path())
-            else {
-                continue;
-            };
+            let Some(p) = path_of(&row) else { continue };
             if p == path {
                 if selection.selected() != i {
                     revealing.set(true);
@@ -286,19 +301,153 @@ fn reveal(list_view: &gtk::ListView, path: PathBuf, revealing: Rc<std::cell::Cel
             }
         }
         false
-    };
-    let step = Rc::new(RefCell::new(step));
-    if (step.borrow_mut())() {
+    });
+}
+
+/// Calls `step` until it is done, or for about two and a half seconds: rows
+/// appear only once the folder they live in has been read.
+fn poll(mut step: impl FnMut() -> bool + 'static) {
+    if step() {
         return;
     }
+    let mut tries = 0;
     glib::timeout_add_local(std::time::Duration::from_millis(60), move || {
         tries += 1;
-        if (step.borrow_mut())() || tries > 40 {
+        if step() || tries > 40 {
             glib::ControlFlow::Break
         } else {
             glib::ControlFlow::Continue
         }
     });
+}
+
+/// Keyboard move through the tree (`J`/`K` over recordings, `H`/`L` over
+/// folders). Walks the rows the tree shows, so the order is the one on screen
+/// and collapsed folders are stepped over, not into.
+fn walk(list_view: &gtk::ListView, step: Step) {
+    let Some(selection) = list_view.model().and_downcast::<gtk::SingleSelection>() else {
+        return;
+    };
+    let count = selection.n_items();
+    let here = selection
+        .selected_item()
+        .and_downcast::<gtk::TreeListRow>()
+        .map(|_| selection.selected());
+
+    // Nothing open yet: the first row of the kind asked for is "the next one".
+    let Some(here) = here else {
+        let first = |want_dir| {
+            (0..count).find(|i| matches!(row_at(&selection, *i), Some((_, d)) if d == want_dir))
+        };
+        match step {
+            Step::File(true) => {
+                if let Some(i) = first(false) {
+                    select(list_view, &selection, i);
+                }
+            }
+            Step::Dir(true) => {
+                if let Some(i) = first(true) {
+                    enter(list_view, &selection, i);
+                }
+            }
+            _ => {}
+        }
+        return;
+    };
+
+    // The folder of the open recording, or the selected folder itself.
+    let folder = match row_at(&selection, here) {
+        Some((path, true)) => path,
+        Some((path, false)) => match path.parent() {
+            Some(dir) => dir.to_path_buf(),
+            None => return,
+        },
+        None => return,
+    };
+
+    // Folders are walked from the row of the folder itself, so a subfolder
+    // listed above the recordings is not left behind.
+    let from = match step {
+        Step::File(_) => here,
+        Step::Dir(_) => (0..count)
+            .find(|i| matches!(row_at(&selection, *i), Some((p, true)) if p == folder))
+            .unwrap_or(here),
+    };
+    let forward = match step {
+        Step::File(f) | Step::Dir(f) => f,
+    };
+    let rest: Box<dyn Iterator<Item = u32>> = if forward {
+        Box::new(from + 1..count)
+    } else {
+        Box::new((0..from).rev())
+    };
+    let next = rest.filter_map(|i| Some((i, row_at(&selection, i)?))).find(
+        |(_, (path, is_dir))| match step {
+            Step::File(_) => !is_dir && path.parent() == Some(folder.as_path()),
+            Step::Dir(_) => *is_dir,
+        },
+    );
+    let Some((i, _)) = next else { return };
+
+    match step {
+        Step::File(_) => select(list_view, &selection, i),
+        Step::Dir(_) => enter(list_view, &selection, i),
+    }
+}
+
+/// Opens the folder in row `i` and the first recording in it.
+fn enter(list_view: &gtk::ListView, selection: &gtk::SingleSelection, i: u32) {
+    let Some(row) = selection.item(i).and_downcast::<gtk::TreeListRow>() else {
+        return;
+    };
+    let Some(folder) = path_of(&row) else { return };
+    row.set_expanded(true);
+    // Keeps the cursor moving even if the folder holds no recordings.
+    select(list_view, selection, i);
+    open_first(list_view, folder);
+}
+
+/// Selects the first recording in `folder` once the folder has been read.
+fn open_first(list_view: &gtk::ListView, folder: PathBuf) {
+    let view = list_view.clone();
+    poll(move || {
+        let Some(selection) = view.model().and_downcast::<gtk::SingleSelection>() else {
+            return true;
+        };
+        for i in 0..selection.n_items() {
+            match row_at(&selection, i) {
+                Some((path, false)) if path.parent() == Some(folder.as_path()) => {
+                    select(&view, &selection, i);
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
+    });
+}
+
+/// Path and kind of the row at `i`, if it is loaded.
+fn row_at(selection: &gtk::SingleSelection, i: u32) -> Option<(PathBuf, bool)> {
+    let row = selection.item(i).and_downcast::<gtk::TreeListRow>()?;
+    let is_dir =
+        row.item().and_downcast::<gio::FileInfo>()?.file_type() == gio::FileType::Directory;
+    Some((path_of(&row)?, is_dir))
+}
+
+fn path_of(row: &gtk::TreeListRow) -> Option<PathBuf> {
+    row.item()
+        .and_downcast::<gio::FileInfo>()
+        .and_then(|info| file_of(&info))
+        .and_then(|f| f.path())
+}
+
+/// Selects a row and scrolls it into view; selecting a recording opens it.
+fn select(list_view: &gtk::ListView, selection: &gtk::SingleSelection, i: u32) {
+    if selection.selected() != i {
+        selection.set_selected(i);
+    }
+    list_view.scroll_to(i, gtk::ListScrollFlags::NONE, None);
 }
 
 fn set_tree_root(

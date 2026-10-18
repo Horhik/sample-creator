@@ -4,6 +4,17 @@
 
 ## 0.3.1
 
+- Listening goes on where it stopped: the playhead is remembered per
+  recording — when leaving for another tab, on pause and when moving to
+  another recording — and put back when you return.
+- A two-finger pinch on a touchpad zooms the waveform (markup and processing),
+  like Ctrl+wheel.
+- Desktop: moving around without the mouse. `J` / `K` open the next and the
+  previous recording in the folder (`Ctrl+Tab` / `Ctrl+Shift+Tab` do the same),
+  `L` / `H` move to the next and the previous folder and open the first
+  recording in it, `Ctrl+L` / `Ctrl+H` walk the regions of the open recording
+  and `Ctrl+J` / `Ctrl+K` its markers. Looping the selection moved from `L`
+  to `C`.
 - Hold a recording from a computer in the file list to listen to it from the
   start while it streams; let go to stop. What was heard is kept, and opening
   the recording then downloads only the rest.

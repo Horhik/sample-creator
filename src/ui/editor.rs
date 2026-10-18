@@ -90,8 +90,8 @@ pub enum EditorMsg {
     ToggleExport,
     ToggleLoop,
     DeleteSelected,
-    /// Select the next (`true`) or previous marker/region and jump to it.
-    Step(bool),
+    /// Select the next (`true`) or previous item of `StepKind` and jump to it.
+    Step(bool, StepKind),
     Escape,
     Undo,
     Redo,
@@ -104,6 +104,15 @@ pub enum EditorMsg {
     Reattach,
     /// Open `path` (if needed) and select `item`.
     OpenAt(PathBuf, Item),
+}
+
+/// What `EditorMsg::Step` walks over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepKind {
+    /// Markers and regions together (`Tab`).
+    Both,
+    Marker,
+    Region,
 }
 
 #[derive(Debug)]
@@ -411,6 +420,9 @@ impl SimpleComponent for Editor {
                     && self.file.is_some()
                 {
                     p.toggle(self.loop_range().map_or(0, |(a, _)| a));
+                    if !p.is_playing() {
+                        self.remember_position();
+                    }
                 }
                 false
             }
@@ -440,7 +452,9 @@ impl SimpleComponent for Editor {
                     if let Some(p) = self.player() {
                         p.set_monitor_db(db as f32);
                     }
-                    self.library.set_setting("listening_db", &db.to_string()).ok();
+                    self.library
+                        .set_setting("listening_db", &db.to_string())
+                        .ok();
                 }
                 false
             }
@@ -483,8 +497,8 @@ impl SimpleComponent for Editor {
                 Some(item) => self.delete(item),
                 None => false,
             },
-            EditorMsg::Step(forward) => {
-                self.step(forward);
+            EditorMsg::Step(forward, kind) => {
+                self.step(forward, kind);
                 false
             }
             EditorMsg::Escape => {
@@ -498,6 +512,9 @@ impl SimpleComponent for Editor {
                 false
             }
             EditorMsg::Pause => {
+                // Leaving the page: the player goes to another one, so where
+                // listening stopped is written down before it is lost.
+                self.remember_position();
                 if let Some(p) = self.player() {
                     p.pause();
                 }
@@ -618,6 +635,7 @@ impl Editor {
         if self.file.as_ref().is_some_and(|f| f.path == path) {
             return;
         }
+        self.remember_position();
         self.file = None;
         self.selected = None;
         self.selection = None;
@@ -636,6 +654,7 @@ impl Editor {
                     p.load(path);
                 }
                 self.file = Some(loaded);
+                self.resume();
                 self.title.set_text(&self.display_name());
                 self.sync_markup();
                 self.waveform.focus();
@@ -678,6 +697,8 @@ impl Editor {
         if !exists {
             self.selected = None;
         }
+        // Back from another page: listening goes on where it stopped.
+        self.resume();
         self.sync_markup();
     }
 
@@ -691,6 +712,30 @@ impl Editor {
         self.selected = Some(item);
         self.seek(pos);
         self.sync_markup();
+    }
+
+    /// Writes down where listening is right now, to pick it up later.
+    fn remember_position(&self) {
+        let (Some(f), Some(p)) = (&self.file, self.player()) else {
+            return;
+        };
+        let pos = p.position();
+        // At the very end it would only replay the last moment: start over.
+        let pos = if pos + 1 >= f.info.total_frames {
+            0
+        } else {
+            pos
+        };
+        self.library.set_position(f.record.id, pos).ok();
+    }
+
+    /// Puts the playhead back where listening stopped last time.
+    fn resume(&self) {
+        let Some(f) = &self.file else { return };
+        let at = self.library.position(f.record.id).unwrap_or(0);
+        if at > 0 && at < f.info.total_frames {
+            self.seek(at);
+        }
     }
 
     fn seek(&self, frame: u64) {
@@ -998,14 +1043,15 @@ impl Editor {
         self.commit(vec![change])
     }
 
-    fn step(&mut self, forward: bool) {
+    fn step(&mut self, forward: bool, kind: StepKind) {
         let Some(markup) = self.markup() else { return };
-        let mut items: Vec<(u64, Item)> = markup
-            .markers
-            .iter()
-            .map(|m| (m.pos, Item::Marker(m.id)))
-            .chain(markup.regions.iter().map(|r| (r.start, Item::Region(r.id))))
-            .collect();
+        let mut items: Vec<(u64, Item)> = Vec::new();
+        if kind != StepKind::Region {
+            items.extend(markup.markers.iter().map(|m| (m.pos, Item::Marker(m.id))));
+        }
+        if kind != StepKind::Marker {
+            items.extend(markup.regions.iter().map(|r| (r.start, Item::Region(r.id))));
+        }
         items.sort_by_key(|(pos, item)| (*pos, matches!(item, Item::Region(_))));
         if items.is_empty() {
             return;
@@ -1267,7 +1313,7 @@ impl Editor {
             .map(|(key, what)| format!("{}  {what}", kbd(key)))
             .collect();
         if !self.auto_loop {
-            parts.push(format!("{}  {}", kbd("L"), tr("цикл выключен", "loop off")));
+            parts.push(format!("{}  {}", kbd("C"), tr("цикл выключен", "loop off")));
         }
         parts.join("     ")
     }
@@ -1347,7 +1393,7 @@ fn all_keys() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                     ),
                 ),
                 (
-                    "L",
+                    "C",
                     tr(
                         "зацикливать выделение и выбранный регион (вкл/выкл)",
                         "loop the selection and the selected region (on/off)",
@@ -1355,7 +1401,10 @@ fn all_keys() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ),
                 (
                     tr("колесо", "wheel"),
-                    tr("прокрутка; Ctrl+колесо — зум", "scroll; Ctrl+wheel — zoom"),
+                    tr(
+                        "прокрутка; Ctrl+колесо или щипок на тачпаде — зум",
+                        "scroll; Ctrl+wheel or a touchpad pinch — zoom",
+                    ),
                 ),
                 (
                     "+ / − / 0",
@@ -1423,6 +1472,34 @@ fn all_keys() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
             ],
         ),
         (
+            tr("Переходы", "Moving around"),
+            vec![
+                (
+                    "J / K",
+                    tr(
+                        "следующая / предыдущая запись в папке",
+                        "next / previous recording in the folder",
+                    ),
+                ),
+                ("Ctrl+Tab / Ctrl+Shift+Tab", tr("то же самое", "the same")),
+                (
+                    "L / H",
+                    tr(
+                        "следующая / предыдущая папка (открывает первую запись)",
+                        "next / previous folder (opens the first recording)",
+                    ),
+                ),
+                (
+                    "Ctrl+L / Ctrl+H",
+                    tr("следующий / предыдущий регион", "next / previous region"),
+                ),
+                (
+                    "Ctrl+J / Ctrl+K",
+                    tr("следующий / предыдущий маркер", "next / previous marker"),
+                ),
+            ],
+        ),
+        (
             tr("Правка", "Edit"),
             vec![
                 ("Ctrl+Z", tr("отменить", "undo")),
@@ -1476,5 +1553,9 @@ fn help_button() -> gtk::MenuButton {
 }
 
 fn listening_label(db: f64) -> String {
-    format!("{}{db:.0} {}", if db > 0.0 { "+" } else { "" }, tr("дБ", "dB"))
+    format!(
+        "{}{db:.0} {}",
+        if db > 0.0 { "+" } else { "" },
+        tr("дБ", "dB")
+    )
 }

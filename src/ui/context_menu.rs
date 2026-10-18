@@ -50,7 +50,7 @@ pub fn show(
     } else {
         tr("Зацикливать выделение", "Loop the selection")
     };
-    entry(&play, label, "loop", Some("l"));
+    entry(&play, label, "loop", Some("c"));
     menu.append_section(None, &play);
 
     let create = gio::Menu::new();

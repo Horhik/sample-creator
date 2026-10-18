@@ -531,6 +531,29 @@ impl Waveform {
             glib::Propagation::Stop
         });
         self.main.add_controller(scroll);
+
+        // Pinch on a touchpad (or a touchscreen) zooms around the fingers,
+        // the same way Ctrl+wheel zooms around the pointer.
+        let zoom = gtk::GestureZoom::new();
+        let started = Rc::new(std::cell::Cell::new(1.0));
+        let s = started.clone();
+        zoom.connect_begin(move |_, _| s.set(1.0));
+        let wf = self.clone();
+        zoom.connect_scale_changed(move |gesture, scale| {
+            if scale <= 0.0 {
+                return;
+            }
+            // Spreading the fingers (a growing scale) shows fewer frames.
+            let factor = started.replace(scale) / scale;
+            let mut s = wf.state.borrow_mut();
+            let x = gesture
+                .bounding_box_center()
+                .map_or(s.pointer_x, |(x, _)| x);
+            s.zoom_at(x, factor);
+            drop(s);
+            wf.redraw();
+        });
+        self.main.add_controller(zoom);
     }
 
     fn drag_to(&self, x: f64) {
