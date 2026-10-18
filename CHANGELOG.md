@@ -4,22 +4,8 @@
 
 ## Unreleased
 
-- Phone: after a markup file is applied, the file list shows the recordings'
-  names and counts right away, without opening each recording. When the
-  markup file was made on a device that had another folder as the root, the
-  recordings are found by name. Recordings that earlier landed on a wrong
-  path are relinked on the next sync.
-- A "Detailed waveform" setting (desktop: the settings menu; phone: the side
-  panel): every pixel is drawn on its own without smoothing, and at deep zoom
-  the waveform is built from the samples themselves, down to one sample per
-  pixel. The current smooth waveform stays the default.
-- A "Waveform in decibels" setting (next to "Detailed waveform"): the height
-  follows loudness in dB, from −60 dB to 0. Quiet takes, and quiet sounds
-  next to an even quieter background, become visible.
-- Phone, full screen, landscape: markup has no top bar any more, the wave
-  takes the whole height. Files, markers and regions, undo and redo moved to
-  the top of the left rail above the tabs, and the recording's name to the
-  head of the right panel.
+### Waveform
+
 - Waveform view: waveform, spectrogram or coloured waveform, plus an
   "Events curve" on top. Switched with a button in the transport row (desktop
   and phone) and in the settings. The spectrogram shows frequencies over
@@ -27,27 +13,52 @@
   the coloured waveform is red where the sound is low, green in the middle,
   blue high; the curve rises where the sound changes. The analysis runs in
   the background the first time and is cached.
-- Phone: the grips on the edges of a selection or region are at the top of
-  the wave now, so the floating controls no longer cover them.
-- The file list opens with the current recording in the middle, not at the
-  top of the folder.
-- Sound no longer stops after the output device changes (Bluetooth
-  headphones connected or disconnected): the player opens the new device and
-  carries on.
+- A "Detailed waveform" setting (desktop: the settings menu; phone: the side
+  panel): every pixel is drawn on its own without smoothing, and at deep zoom
+  the waveform is built from the samples themselves, down to one sample per
+  pixel. The current smooth waveform stays the default.
+- A "Waveform in decibels" setting (next to "Detailed waveform"): the height
+  follows loudness in dB, from −60 dB to 0. Quiet takes, and quiet sounds
+  next to an even quieter background, become visible.
+- A two-finger pinch on a touchpad zooms the waveform (markup and processing),
+  like Ctrl+wheel.
 
-## 0.3.1
+### Listening
 
 - Listening goes on where it stopped: the playhead is remembered per
   recording — when leaving for another tab, on pause and when moving to
   another recording — and put back when you return.
-- A two-finger pinch on a touchpad zooms the waveform (markup and processing),
-  like Ctrl+wheel.
-- Desktop: moving around without the mouse. `J` / `K` open the next and the
-  previous recording in the folder (`Ctrl+Tab` / `Ctrl+Shift+Tab` do the same),
+- Sound no longer stops after the output device changes (Bluetooth
+  headphones connected or disconnected): the player opens the new device and
+  carries on.
+
+### Desktop
+
+- Moving around without the mouse. `J` / `K` open the next and the previous
+  recording in the folder (`Ctrl+Tab` / `Ctrl+Shift+Tab` do the same),
   `L` / `H` move to the next and the previous folder and open the first
   recording in it, `Ctrl+L` / `Ctrl+H` walk the regions of the open recording
   and `Ctrl+J` / `Ctrl+K` its markers. Looping the selection moved from `L`
   to `C`.
+
+### Phone
+
+- Full screen, landscape: markup has no top bar any more, the wave takes the
+  whole height. Files, markers and regions, undo and redo moved to the top of
+  the left rail above the tabs, and the recording's name to the head of the
+  right panel.
+- The grips on the edges of a selection or region are at the top of the wave
+  now, so the floating controls no longer cover them.
+- After a markup file is applied, the file list shows the recordings' names
+  and counts right away, without opening each recording. When the markup file
+  was made on a device that had another folder as the root, the recordings
+  are found by name. Recordings that earlier landed on a wrong path are
+  relinked on the next sync.
+- The file list opens with the current recording in the middle, not at the
+  top of the folder.
+
+## 0.3.1
+
 - Hold a recording from a computer in the file list to listen to it from the
   start while it streams; let go to stop. What was heard is kept, and opening
   the recording then downloads only the rest.
