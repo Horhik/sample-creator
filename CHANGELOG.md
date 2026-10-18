@@ -7,7 +7,13 @@
 - Phone: after a markup file is applied, the file list shows the recordings'
   names and counts right away, without opening each recording. When the
   markup file was made on a device that had another folder as the root, the
-  recordings are found by name.
+  recordings are found by name. Recordings that earlier landed on a wrong
+  path are relinked on the next sync.
+- The file list opens with the current recording in the middle, not at the
+  top of the folder.
+- Sound no longer stops after the output device changes (Bluetooth
+  headphones connected or disconnected): the player opens the new device and
+  carries on.
 
 ## 0.3.1
 

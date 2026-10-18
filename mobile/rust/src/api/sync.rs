@@ -22,6 +22,8 @@ pub struct SyncInfo {
 pub struct SyncReport {
     pub imported: u32,
     pub exported: u32,
+    /// Recordings found again where another device's paths pointed wrong.
+    pub relinked: u32,
     /// One line per volume that failed.
     pub errors: Vec<String>,
 }
@@ -98,6 +100,7 @@ fn after(reports: &[Report], errors: Vec<String>) -> Result<SyncReport> {
     Ok(SyncReport {
         imported: imported as u32,
         exported: exported as u32,
+        relinked: reports.iter().map(|r| r.relinked).sum::<usize>() as u32,
         errors,
     })
 }

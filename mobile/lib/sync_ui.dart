@@ -13,7 +13,7 @@ final markupChanged = ValueNotifier<int>(0);
 Future<void> syncAll([BuildContext? context]) async {
   try {
     final r = await sync.syncAllVolumes();
-    if (r.imported > 0) markupChanged.value++;
+    if (r.imported > 0 || r.relinked > 0) markupChanged.value++;
     if (context != null && context.mounted && r.errors.isNotEmpty) {
       ScaffoldMessenger.of(
         context,
@@ -62,7 +62,7 @@ class _VolumeSheetState extends State<_VolumeSheet> {
     });
     try {
       final r = await action();
-      if (r.imported > 0) markupChanged.value++;
+      if (r.imported > 0 || r.relinked > 0) markupChanged.value++;
       _message = r.errors.isNotEmpty
           ? r.errors.join('\n')
           : tr(

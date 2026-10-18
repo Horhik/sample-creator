@@ -3212,12 +3212,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   SyncReport dco_decode_sync_report(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
     return SyncReport(
       imported: dco_decode_u_32(arr[0]),
       exported: dco_decode_u_32(arr[1]),
-      errors: dco_decode_list_String(arr[2]),
+      relinked: dco_decode_u_32(arr[2]),
+      errors: dco_decode_list_String(arr[3]),
     );
   }
 
@@ -3811,10 +3812,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_imported = sse_decode_u_32(deserializer);
     var var_exported = sse_decode_u_32(deserializer);
+    var var_relinked = sse_decode_u_32(deserializer);
     var var_errors = sse_decode_list_String(deserializer);
     return SyncReport(
       imported: var_imported,
       exported: var_exported,
+      relinked: var_relinked,
       errors: var_errors,
     );
   }
@@ -4332,6 +4335,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_32(self.imported, serializer);
     sse_encode_u_32(self.exported, serializer);
+    sse_encode_u_32(self.relinked, serializer);
     sse_encode_list_String(self.errors, serializer);
   }
 

@@ -1,4 +1,6 @@
-//! Playback: one cpal output stream for the app's lifetime, fed by a decoder thread.
+//! Playback: a cpal output stream fed by a decoder thread. The stream is
+//! reopened when its device goes away (headphones, a Bluetooth headset
+//! connecting), so playback follows the system's current output.
 //!
 //! The decoder thread reads the current file from the play cursor, maps channels
 //! to the device layout, resamples (linear; for preview only) and queues chunks.
@@ -10,12 +12,12 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded};
 
 use super::decode::{self, FrameSource};
 
@@ -43,9 +45,31 @@ struct Shared {
     gain: std::sync::atomic::AtomicU32,
     /// Listening volume as f32 bits, on top of `gain`; kept across loads.
     monitor: std::sync::atomic::AtomicU32,
+    /// Last audio callback, ms since `epoch`: a stream that stopped asking
+    /// for audio while playing is reopened.
+    last_fill: AtomicU64,
+    epoch: Instant,
+    /// The player is gone: the output thread closes the stream.
+    closed: AtomicBool,
 }
 
+/// Playing, yet the device has not asked for audio this long: the stream is dead.
+const STALLED_MS: u64 = 2000;
+
 impl Shared {
+    fn now_ms(&self) -> u64 {
+        self.epoch.elapsed().as_millis() as u64
+    }
+
+    fn touch(&self) {
+        self.last_fill.store(self.now_ms(), Ordering::Relaxed);
+    }
+
+    fn stalled(&self) -> bool {
+        self.playing.load(Ordering::Relaxed)
+            && self.now_ms() > self.last_fill.load(Ordering::Relaxed) + STALLED_MS
+    }
+
     fn set_position(&self, frame: f64) {
         self.position.store(frame.to_bits(), Ordering::Relaxed);
     }
@@ -60,6 +84,11 @@ enum Cmd {
         sample_rate: u32,
     },
     Unload,
+    /// The output was reopened on a device with another layout.
+    Output {
+        channels: usize,
+        rate: u32,
+    },
     Seek(u64),
     /// Play only `[start, end)`; `None` end means to the end of the file.
     Range {
@@ -74,7 +103,6 @@ pub const MONITOR_MIN_DB: f32 = -24.0;
 pub const MONITOR_MAX_DB: f32 = 24.0;
 
 pub struct Player {
-    _stream: cpal::Stream,
     shared: Arc<Shared>,
     cmd: Sender<Cmd>,
     /// The file being played, if any.
@@ -83,16 +111,6 @@ pub struct Player {
 
 impl Player {
     pub fn new() -> Result<Self> {
-        let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .context("no audio output device")?;
-        let supported = device.default_output_config()?;
-        let format = supported.sample_format();
-        let config: cpal::StreamConfig = supported.into();
-        let out_channels = usize::from(config.channels);
-        let out_rate = config.sample_rate;
-
         let shared = Arc::new(Shared {
             queue: Mutex::new(VecDeque::new()),
             playing: AtomicBool::new(false),
@@ -100,25 +118,26 @@ impl Player {
             position: AtomicU64::new(0f64.to_bits()),
             gain: std::sync::atomic::AtomicU32::new(1f32.to_bits()),
             monitor: std::sync::atomic::AtomicU32::new(1f32.to_bits()),
+            last_fill: AtomicU64::new(0),
+            epoch: Instant::now(),
+            closed: AtomicBool::new(false),
         });
 
-        let stream = match format {
-            cpal::SampleFormat::F32 => build_stream::<f32>(&device, config, shared.clone()),
-            cpal::SampleFormat::I16 => build_stream::<i16>(&device, config, shared.clone()),
-            cpal::SampleFormat::I32 => build_stream::<i32>(&device, config, shared.clone()),
-            cpal::SampleFormat::U16 => build_stream::<u16>(&device, config, shared.clone()),
-            other => anyhow::bail!("unsupported device sample format {other}"),
-        }?;
-        stream.play()?;
-
         let (cmd, rx) = unbounded();
+        let (ready_tx, ready) = bounded(1);
+        let output_shared = shared.clone();
+        let output_cmd = cmd.clone();
+        thread::Builder::new()
+            .name("player-output".into())
+            .spawn(move || run_output(output_shared, output_cmd, ready_tx))?;
+        let (out_channels, out_rate) = ready.recv().context("audio output thread ended")??;
+
         let decoder_shared = shared.clone();
         thread::Builder::new()
             .name("player-decoder".into())
             .spawn(move || Decoder::new(decoder_shared, out_channels, out_rate).run(rx))?;
 
         Ok(Player {
-            _stream: stream,
             shared,
             cmd,
             current: Mutex::new(None),
@@ -236,10 +255,87 @@ impl Player {
     }
 }
 
+impl Drop for Player {
+    fn drop(&mut self) {
+        self.shared.closed.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Owns the output stream. Opens it on the default device, and again on
+/// whatever is the default then when the device goes away or the stream
+/// stops asking for audio while playing. The first layout goes to `ready`,
+/// later changes to the decoder.
+fn run_output(shared: Arc<Shared>, cmd: Sender<Cmd>, ready: Sender<Result<(usize, u32)>>) {
+    let (broken_tx, broken) = unbounded::<()>();
+    let mut ready = Some(ready);
+    let mut layout = None;
+    while !shared.closed.load(Ordering::Relaxed) {
+        match open_output(&shared, broken_tx.clone()) {
+            Ok((stream, channels, rate)) => {
+                if let Some(ready) = ready.take() {
+                    ready.send(Ok((channels, rate))).ok();
+                } else if layout != Some((channels, rate)) {
+                    cmd.send(Cmd::Output { channels, rate }).ok();
+                }
+                layout = Some((channels, rate));
+                shared.touch();
+                loop {
+                    match broken.recv_timeout(Duration::from_millis(500)) {
+                        Ok(()) => break,
+                        Err(RecvTimeoutError::Timeout) => {
+                            if shared.closed.load(Ordering::Relaxed) {
+                                return;
+                            }
+                            if shared.stalled() {
+                                eprintln!("audio output stalled, reopening");
+                                break;
+                            }
+                        }
+                        Err(RecvTimeoutError::Disconnected) => return,
+                    }
+                }
+                drop(stream);
+                while broken.try_recv().is_ok() {}
+            }
+            Err(err) => {
+                if let Some(ready) = ready.take() {
+                    ready.send(Err(err)).ok();
+                    return;
+                }
+                eprintln!("audio output: {err:#}");
+            }
+        }
+        // Let the system settle on the new device before asking for it.
+        thread::sleep(Duration::from_millis(300));
+    }
+}
+
+fn open_output(shared: &Arc<Shared>, broken: Sender<()>) -> Result<(cpal::Stream, usize, u32)> {
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .context("no audio output device")?;
+    let supported = device.default_output_config()?;
+    let format = supported.sample_format();
+    let config: cpal::StreamConfig = supported.into();
+    let channels = usize::from(config.channels);
+    let rate = config.sample_rate;
+    let stream = match format {
+        cpal::SampleFormat::F32 => build_stream::<f32>(&device, config, shared.clone(), broken),
+        cpal::SampleFormat::I16 => build_stream::<i16>(&device, config, shared.clone(), broken),
+        cpal::SampleFormat::I32 => build_stream::<i32>(&device, config, shared.clone(), broken),
+        cpal::SampleFormat::U16 => build_stream::<u16>(&device, config, shared.clone(), broken),
+        other => anyhow::bail!("unsupported device sample format {other}"),
+    }?;
+    stream.play()?;
+    Ok((stream, channels, rate))
+}
+
 fn build_stream<T>(
     device: &cpal::Device,
     config: cpal::StreamConfig,
     shared: Arc<Shared>,
+    broken: Sender<()>,
 ) -> Result<cpal::Stream>
 where
     T: SizedSample + FromSample<f32>,
@@ -248,7 +344,15 @@ where
     let stream = device.build_output_stream(
         config,
         move |out: &mut [T], _| fill(out, channels, &shared),
-        |err| eprintln!("audio stream: {err}"),
+        move |err| {
+            eprintln!("audio stream: {err}");
+            if matches!(
+                err.kind(),
+                cpal::ErrorKind::DeviceNotAvailable | cpal::ErrorKind::HostUnavailable
+            ) {
+                broken.send(()).ok();
+            }
+        },
         None,
     )?;
     Ok(stream)
@@ -256,6 +360,7 @@ where
 
 fn fill<T: SizedSample + FromSample<f32>>(out: &mut [T], channels: usize, shared: &Shared) {
     let silence = T::from_sample(0.0f32);
+    shared.touch();
     if !shared.playing.load(Ordering::Relaxed) {
         out.fill(silence);
         return;
@@ -301,6 +406,7 @@ struct Decoder {
 
     source: Option<Box<dyn FrameSource>>,
     src_channels: usize,
+    src_rate: u32,
     total_frames: u64,
     step: f64,
 
@@ -325,6 +431,7 @@ impl Decoder {
             out_rate,
             source: None,
             src_channels: 0,
+            src_rate: out_rate,
             total_frames: 0,
             step: 1.0,
             range_start: 0,
@@ -382,6 +489,7 @@ impl Decoder {
                     Ok((info, source)) => {
                         self.source = Some(source);
                         self.src_channels = usize::from(info.channels);
+                        self.src_rate = info.sample_rate;
                         self.total_frames = info.total_frames;
                         self.step = f64::from(info.sample_rate) / f64::from(self.out_rate);
                         self.reposition(0);
@@ -403,12 +511,29 @@ impl Decoder {
                 self.total_frames = source.frames();
                 self.source = Some(Box::new(source));
                 self.src_channels = usize::from(channels);
+                self.src_rate = sample_rate;
                 self.step = f64::from(sample_rate) / f64::from(self.out_rate);
                 self.reposition(0);
             }
             Cmd::Unload => {
                 self.source = None;
                 self.flush();
+            }
+            Cmd::Output { channels, rate } => {
+                // What is queued has the old layout: decode again from the playhead.
+                self.out_channels = channels;
+                self.out_rate = rate;
+                self.step = f64::from(self.src_rate) / f64::from(rate);
+                let at = f64::from_bits(self.shared.position.load(Ordering::Relaxed)) as u64;
+                if self.source.is_some() {
+                    let exhausted = self.shared.exhausted.load(Ordering::Relaxed);
+                    self.reposition(at);
+                    if exhausted {
+                        self.shared.exhausted.store(true, Ordering::Relaxed);
+                    }
+                } else {
+                    self.flush();
+                }
             }
             Cmd::Seek(frame) => self.reposition(frame),
             Cmd::Range {

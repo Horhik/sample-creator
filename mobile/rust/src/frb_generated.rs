@@ -3491,10 +3491,12 @@ impl SseDecode for crate::api::sync::SyncReport {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_imported = <u32>::sse_decode(deserializer);
         let mut var_exported = <u32>::sse_decode(deserializer);
+        let mut var_relinked = <u32>::sse_decode(deserializer);
         let mut var_errors = <Vec<String>>::sse_decode(deserializer);
         return crate::api::sync::SyncReport {
             imported: var_imported,
             exported: var_exported,
+            relinked: var_relinked,
             errors: var_errors,
         };
     }
@@ -4030,6 +4032,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::sync::SyncReport {
         [
             self.imported.into_into_dart().into_dart(),
             self.exported.into_into_dart().into_dart(),
+            self.relinked.into_into_dart().into_dart(),
             self.errors.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -4499,6 +4502,7 @@ impl SseEncode for crate::api::sync::SyncReport {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <u32>::sse_encode(self.imported, serializer);
         <u32>::sse_encode(self.exported, serializer);
+        <u32>::sse_encode(self.relinked, serializer);
         <Vec<String>>::sse_encode(self.errors, serializer);
     }
 }

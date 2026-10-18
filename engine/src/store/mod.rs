@@ -439,6 +439,15 @@ impl Library {
     }
 
     /// `None` (or blank) goes back to the file name.
+    /// The recording was found at `path` (sync with another device's paths).
+    pub fn set_path(&self, file: Id, path: &Path) -> Result<()> {
+        self.conn.execute(
+            "UPDATE files SET path = ?1 WHERE id = ?2",
+            params![path.to_string_lossy(), file],
+        )?;
+        Ok(())
+    }
+
     pub fn set_alias(&self, file: Id, alias: Option<&str>) -> Result<()> {
         let alias = alias.map(str::trim).filter(|a| !a.is_empty());
         self.conn.execute(

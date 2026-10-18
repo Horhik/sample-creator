@@ -88,6 +88,8 @@ pub struct Report {
     pub imported: usize,
     /// Recordings written from the app to the file.
     pub exported: usize,
+    /// Recordings the app knew under a path that is not there, found again.
+    pub relinked: usize,
 }
 
 const TARGET: &str = "sync.target:";
@@ -223,7 +225,17 @@ pub fn sync(library: &Library, root: &Path, path: &Path) -> Result<Report> {
         let Ok(fp) = u64::from_str_radix(&rec.fingerprint, 16) else {
             continue;
         };
-        let newer = by_fp.get(&fp).is_none_or(|f| rec.updated_at > f.updated_at);
+        let local = by_fp.get(&fp);
+        let newer = local.is_none_or(|f| rec.updated_at > f.updated_at);
+        if let Some(f) = local.filter(|f| !newer && !f.path.is_file()) {
+            // Imported earlier to a path that is not there (the other
+            // device had another root): put it where the recording is.
+            let found = places.find(&rec.path);
+            if found.is_file() && found != f.path {
+                library.set_path(f.id, &found)?;
+                report.relinked += 1;
+            }
+        }
         if newer {
             let (mut file, markup) = to_library(&rec, fp, root);
             file.path = places.find(&rec.path);
@@ -580,7 +592,8 @@ mod tests {
             r,
             Report {
                 imported: 0,
-                exported: 1
+                exported: 1,
+                ..Default::default()
             }
         );
 
@@ -592,7 +605,8 @@ mod tests {
             r,
             Report {
                 imported: 1,
-                exported: 0
+                exported: 0,
+                ..Default::default()
             }
         );
         let rec = pc
@@ -666,6 +680,13 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(at.alias.as_deref(), Some("репетиция"));
+
+        // Imported earlier to a path that is not there: put right on the next sync.
+        let old = Library::open_in_memory().unwrap();
+        let wrong = old.file(42, &card.join("take.wav"), 48000, 2, 1000).unwrap();
+        old.set_updated_at(wrong.id, i64::MAX).unwrap();
+        assert_eq!(sync(&old, &card, &state).unwrap().relinked, 1);
+        assert!(old.summary_at(&card.join("MUSIC/take.wav")).unwrap().is_some());
 
         // Elsewhere in the tree: found by name.
         let mut places = Places::new(&card, &card);

@@ -76,17 +76,25 @@ class SyncReport {
   final int imported;
   final int exported;
 
+  /// Recordings found again where another device's paths pointed wrong.
+  final int relinked;
+
   /// One line per volume that failed.
   final List<String> errors;
 
   const SyncReport({
     required this.imported,
     required this.exported,
+    required this.relinked,
     required this.errors,
   });
 
   @override
-  int get hashCode => imported.hashCode ^ exported.hashCode ^ errors.hashCode;
+  int get hashCode =>
+      imported.hashCode ^
+      exported.hashCode ^
+      relinked.hashCode ^
+      errors.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -95,5 +103,6 @@ class SyncReport {
           runtimeType == other.runtimeType &&
           imported == other.imported &&
           exported == other.exported &&
+          relinked == other.relinked &&
           errors == other.errors;
 }

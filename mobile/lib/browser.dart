@@ -119,6 +119,9 @@ class FileBrowserState extends State<FileBrowser> {
   /// The recording playing while a finger holds it.
   String? _previewing;
 
+  final _scroll = ScrollController();
+  final _currentKey = GlobalKey();
+
   void _startPreview(String path) {
     HapticFeedback.mediumImpact();
     widget.onPreview?.call(true);
@@ -165,6 +168,7 @@ class FileBrowserState extends State<FileBrowser> {
       remote_api.stopFilePreview();
       widget.onPreview?.call(false);
     }
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -260,6 +264,7 @@ class FileBrowserState extends State<FileBrowser> {
     try {
       final entries = await engine.listDir(path: dir);
       if (!mounted) return;
+      final fresh = dir != _dir;
       setState(() {
         _dir = dir;
         _entries = widget.onFile == null
@@ -269,9 +274,33 @@ class FileBrowserState extends State<FileBrowser> {
       });
       review_api.setSetting(key: widget.settingsKey, value: dir);
       widget.onDir?.call(dir);
+      if (fresh) _centerCurrent();
     } catch (e) {
       setState(() => _error = friendlyError(e));
     }
+  }
+
+  /// Shows the open recording in the middle of the list, so going back to
+  /// the folder does not mean scrolling down to it again.
+  void _centerCurrent() {
+    final i = _entries.indexWhere((e) => e.path == widget.current);
+    if (i < 0) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      // Tiles are built lazily: jump to about where it is, then centre it.
+      final before = _entries
+          .take(i)
+          .fold<double>(0, (h, e) => h + (e.isDir ? 56 : 72));
+      final pos = _scroll.position;
+      final guess = before + 36 - pos.viewportDimension / 2;
+      _scroll.jumpTo(guess.clamp(0, pos.maxScrollExtent));
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final tile = _currentKey.currentContext;
+        if (mounted && tile != null && tile.mounted) {
+          Scrollable.ensureVisible(tile, alignment: 0.5);
+        }
+      });
+    });
   }
 
   void up() {
@@ -465,6 +494,7 @@ class FileBrowserState extends State<FileBrowser> {
     return ListView.builder(
       // A new folder starts at its top, not where the last one was scrolled.
       key: ValueKey(_dir),
+      controller: _scroll,
       itemCount: _entries.length,
       itemBuilder: (context, i) {
         final e = _entries[i];
@@ -482,6 +512,7 @@ class FileBrowserState extends State<FileBrowser> {
         final listening = _previewing == e.path;
         // Hold to listen from the start, let go to stop.
         return GestureDetector(
+          key: e.path == widget.current ? _currentKey : null,
           onLongPressStart: (_) => _startPreview(e.path),
           onLongPressEnd: (_) => _stopPreview(),
           onLongPressCancel: _stopPreview,
