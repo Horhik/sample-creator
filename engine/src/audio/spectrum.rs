@@ -127,6 +127,9 @@ impl Spectrum {
     }
 }
 
+/// How far, in pixels, an event peak spreads to each side.
+const EVENT_SPREAD: usize = 3;
+
 /// What a stretch of the recording looks like, one entry per pixel column.
 #[derive(Clone, Debug, Default)]
 pub struct SpectrumView {
@@ -222,10 +225,22 @@ impl SpectrumReader<'_> {
             let peak = known[known.len() - 1];
             // A floor: a steady stretch does not blow its jitter up into events.
             let scale = (peak - base).max(1.5);
-            for (e, &f) in view.events.iter_mut().zip(&flux) {
-                if !f.is_nan() {
-                    *e = Some(((f - base) / scale).clamp(0.0, 1.0));
+            let raw: Vec<f32> = flux.iter().map(|&f| ((f - base) / scale).clamp(0.0, 1.0)).collect();
+            // Each peak spreads into a rounded bump a few pixels wide, so busy
+            // speech reads as a hill rather than a comb of needles.
+            for (x, e) in view.events.iter_mut().enumerate() {
+                if raw[x].is_nan() {
+                    continue;
                 }
+                let near = x.saturating_sub(EVENT_SPREAD)..(x + EVENT_SPREAD + 1).min(raw.len());
+                let v = near
+                    .filter(|&i| !raw[i].is_nan())
+                    .map(|i| {
+                        let k = i.abs_diff(x) as f32 / (EVENT_SPREAD + 1) as f32;
+                        raw[i] * (1.0 - k * k)
+                    })
+                    .fold(0.0, f32::max);
+                *e = Some(v);
             }
         }
         view
@@ -566,8 +581,11 @@ mod tests {
             let c = v.colors[3].unwrap();
             assert!((c >> 8 & 0xff) > (c >> 16) && (c >> 8 & 0xff) > (c & 0xff));
             // The tone's start is the event; the steady tone is not.
-            assert_eq!(v.events[2], Some(1.0));
-            assert_eq!(v.events[3], Some(0.0));
+            let v = sp.read().view(0.0, total as f64 / 16.0, 16);
+            let peak = (0..16).max_by(|&a, &b| v.events[a].partial_cmp(&v.events[b]).unwrap()).unwrap();
+            assert!((6..10).contains(&peak), "peak at {peak}");
+            assert_eq!(v.events[peak], Some(1.0));
+            assert!(v.events[..4].iter().all(|&e| e == Some(0.0)));
         };
         check(&sp);
 

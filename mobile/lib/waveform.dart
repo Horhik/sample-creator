@@ -553,8 +553,13 @@ void drawSpectrogram(Canvas canvas, engine.SpectrumData d, Rect r) {
     colors: colors,
     indices: _gridIndices(cols, bands),
   );
-  // dst: the vertex colours alone, the paint adds nothing.
-  canvas.drawVertices(vertices, BlendMode.dst, Paint());
+  // modulate with white: the vertex colours alone, whichever side the
+  // renderer (Skia or Impeller) takes them as.
+  canvas.drawVertices(
+    vertices,
+    BlendMode.modulate,
+    Paint()..color = const Color(0xFFFFFFFF),
+  );
 }
 
 final _indices = <(int, int), Uint16List>{};
