@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "aurora": {
+      "type": "http",
+      "url": "https://developer.auroraos.ru/api/mcp"
+    }
+  }
+}
