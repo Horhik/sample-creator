@@ -2,7 +2,7 @@
 
 <p><b>English</b> | <a href="CHANGELOG.ru.md">Русский</a></p>
 
-## Unreleased
+## 0.4.0
 
 ### Waveform
 

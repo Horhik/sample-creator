@@ -1,6 +1,6 @@
 [package]
 name = "sample-creator-engine"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 description = "Sample Creator core: recordings, waveform, playback, markup library, export and processing"
 license = "MIT"
